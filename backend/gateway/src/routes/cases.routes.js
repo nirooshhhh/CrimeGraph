@@ -7,5 +7,6 @@ const casesController = require('../controllers/cases.controller');
 router.get('/', casesController.getAllCases);
 router.get('/:id', casesController.getCaseById);
 router.post('/', casesController.createCase);
+router.post('/:id/entities', casesController.linkEntity);
 
 module.exports = router;

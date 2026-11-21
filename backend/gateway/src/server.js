@@ -1,3 +1,7 @@
+const dashboardRoutes = require('./routes/dashboard.routes');
+const graphRoutes = require('./routes/graph.routes');
+const relationshipsRoutes = require('./routes/relationships.routes');
+const entitiesRoutes = require('./routes/entities.routes');
 const casesRoutes = require('./routes/cases.routes');
 const express = require('express');
 const cors = require('cors');
@@ -10,6 +14,10 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 app.use('/api/cases', casesRoutes);
+app.use('/api/entities', entitiesRoutes);
+app.use('/api/relationships', relationshipsRoutes);
+app.use('/api/graph', graphRoutes);
+app.use('/api/dashboard', dashboardRoutes);
 // Health check
 app.get('/api/health', (req, res) => {
     res.status(200).json({

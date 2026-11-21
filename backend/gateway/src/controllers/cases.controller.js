@@ -67,8 +67,36 @@ const createCase = async (req, res) => {
     }
 };
 
+const linkEntity = async (req, res) => {
+    try {
+        const { entity_id } = req.body;
+        const { id } = req.params;
+
+        if (!entity_id) {
+            return res.status(400).json({
+                success: false,
+                message: 'entity_id is required'
+            });
+        }
+
+        const data = await casesService.linkEntityToCase(id, entity_id);
+
+        res.status(201).json({
+            success: true,
+            message: 'Entity linked to case successfully',
+            data
+        });
+    } catch (error) {
+        res.status(500).json({
+            success: false,
+            message: error.message
+        });
+    }
+};
+
 module.exports = {
     getAllCases,
     getCaseById,
-    createCase
+    createCase,
+    linkEntity
 };
