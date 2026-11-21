@@ -1,3 +1,5 @@
+const sourcesRoutes = require('./routes/sources.routes');
+const documentsRoutes = require('./routes/documents.routes');
 const dashboardRoutes = require('./routes/dashboard.routes');
 const graphRoutes = require('./routes/graph.routes');
 const relationshipsRoutes = require('./routes/relationships.routes');
@@ -18,6 +20,8 @@ app.use('/api/entities', entitiesRoutes);
 app.use('/api/relationships', relationshipsRoutes);
 app.use('/api/graph', graphRoutes);
 app.use('/api/dashboard', dashboardRoutes);
+app.use('/api/documents', documentsRoutes);
+app.use('/api/sources', sourcesRoutes);
 // Health check
 app.get('/api/health', (req, res) => {
     res.status(200).json({
