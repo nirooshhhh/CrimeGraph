@@ -38,19 +38,27 @@ const createCase = async (caseData) => {
     return data;
 };
 
+
 const linkEntityToCase = async (caseId, entityId) => {
     const { data, error } = await supabase
         .from('case_entities')
-        .insert([{
-            case_id: caseId,
-            entity_id: entityId
-        }])
+        .upsert(
+            {
+                case_id: caseId,
+                entity_id: entityId
+            },
+            {
+                onConflict: 'case_id,entity_id',
+                ignoreDuplicates: true
+            }
+        )
         .select()
-        .single();
+        .maybeSingle();
 
     if (error) throw error;
     return data;
 };
+
 
 module.exports = {
     getAllCases,

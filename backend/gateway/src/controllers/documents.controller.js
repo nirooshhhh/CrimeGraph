@@ -273,14 +273,48 @@ const uploadDocument = async (req, res) => {
             .digest('hex');
 
         // Extract text
-        let extractedText = '';
 
-        if (req.file.originalname.toLowerCase().endsWith('.pdf')) {
-            const pdfData = await pdfParse(fileBuffer);
-            extractedText = pdfData.text;
-        } else if (req.file.originalname.toLowerCase().endsWith('.txt')) {
-            extractedText = fileBuffer.toString('utf8');
+        // Extract text using Python NLP Service
+        let extractedText = '';
+        let nlpServiceUsed = false;
+
+        try {
+            const formData = new FormData();
+
+            formData.append(
+                'file',
+                new Blob([fileBuffer], { type: req.file.mimetype }),
+                req.file.originalname
+            );
+
+            const nlpResponse = await fetch(
+                `${process.env.NLP_SERVICE_URL || 'http://127.0.0.1:8002'}/api/extract`,
+                {
+                    method: 'POST',
+                    body: formData
+                }
+            );
+
+            const nlpResult = await nlpResponse.json();
+
+            if (!nlpResponse.ok || !nlpResult.success) {
+                throw new Error(nlpResult.detail || 'NLP extraction failed');
+            }
+
+            extractedText = nlpResult.extracted_text;
+            nlpServiceUsed = true;
+
+        } catch (error) {
+            console.error('NLP Service unavailable, using local extraction:', error.message);
+
+            if (req.file.originalname.toLowerCase().endsWith('.pdf')) {
+                const pdfData = await pdfParse(fileBuffer);
+                extractedText = pdfData.text;
+            } else if (req.file.originalname.toLowerCase().endsWith('.txt')) {
+                extractedText = fileBuffer.toString('utf8');
+            }
         }
+
 
         // Save document record
         const documentData = {
@@ -321,6 +355,7 @@ const uploadDocument = async (req, res) => {
             data: document,
             extraction: {
                 textLength: extractedText.length,
+                nlpServiceUsed,
                 entitiesDetected: detectedEntities.length,
                 entities: detectedEntities,
                 entityExtractionError: extractionError

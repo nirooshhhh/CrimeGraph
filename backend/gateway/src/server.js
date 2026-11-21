@@ -1,3 +1,8 @@
+const entityAliasesRoutes = require('./routes/entityAliases.routes');
+const entityMatchCandidatesRoutes =
+    require('./routes/entityMatchCandidates.routes');
+const auditLogsRoutes = require('./routes/auditLogs.routes');
+const alertsRoutes = require('./routes/alerts.routes');
 const transactionsRoutes = require('./routes/transactions.routes');
 const callRecordsRoutes = require('./routes/callRecords.routes');
 const sourcesRoutes = require('./routes/sources.routes');
@@ -26,6 +31,10 @@ app.use('/api/documents', documentsRoutes);
 app.use('/api/sources', sourcesRoutes);
 app.use('/api/call-records', callRecordsRoutes);
 app.use('/api/transactions', transactionsRoutes);
+app.use('/api/alerts', alertsRoutes);
+app.use('/api/audit-logs', auditLogsRoutes);
+app.use('/api/entity-match-candidates', entityMatchCandidatesRoutes);
+app.use('/api/entity-aliases', entityAliasesRoutes);
 // Health check
 app.get('/api/health', (req, res) => {
     res.status(200).json({
@@ -68,6 +77,13 @@ app.get('/api/db-check', async (req, res) => {
             error: error.message
         });
     }
+});
+
+app.use((req, res) => {
+    res.status(404).json({
+        success: false,
+        message: `Route not found: ${req.method} ${req.originalUrl}`
+    });
 });
 
 const PORT = process.env.PORT || 5000;
