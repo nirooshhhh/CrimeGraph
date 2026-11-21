@@ -1,6 +1,7 @@
 
 const relationshipsService = require('../services/relationships.service');
 
+// Get all relationships
 const getAllRelationships = async (req, res) => {
     try {
         const relationships =
@@ -19,6 +20,7 @@ const getAllRelationships = async (req, res) => {
     }
 };
 
+// Get relationships for a particular entity
 const getEntityRelationships = async (req, res) => {
     try {
         const relationships =
@@ -39,6 +41,7 @@ const getEntityRelationships = async (req, res) => {
     }
 };
 
+// Create a relationship
 const createRelationship = async (req, res) => {
     try {
         const {
@@ -82,8 +85,76 @@ const createRelationship = async (req, res) => {
     }
 };
 
+// Get evidence for a relationship
+const getRelationshipEvidence = async (req, res) => {
+    try {
+        const evidence =
+            await relationshipsService.getRelationshipEvidence(
+                req.params.relationshipId
+            );
+
+        res.status(200).json({
+            success: true,
+            count: evidence.length,
+            data: evidence
+        });
+    } catch (error) {
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+};
+
+// Add evidence to a relationship
+const createRelationshipEvidence = async (req, res) => {
+    try {
+        const {
+            document_id,
+            call_record_id,
+            transaction_id,
+            explanation
+        } = req.body || {};
+
+        const sourceIds = [
+            document_id,
+            call_record_id,
+            transaction_id
+        ].filter(Boolean);
+
+        if (sourceIds.length !== 1) {
+            return res.status(400).json({
+                success: false,
+                message: 'Provide exactly one evidence source: document_id, call_record_id, or transaction_id'
+            });
+        }
+
+        const evidence =
+            await relationshipsService.createRelationshipEvidence({
+                relationship_id: req.params.relationshipId,
+                document_id: document_id || null,
+                call_record_id: call_record_id || null,
+                transaction_id: transaction_id || null,
+                explanation: explanation || null
+            });
+
+        res.status(201).json({
+            success: true,
+            message: 'Relationship evidence added successfully',
+            data: evidence
+        });
+    } catch (error) {
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+};
+
 module.exports = {
     getAllRelationships,
     getEntityRelationships,
-    createRelationship
+    createRelationship,
+    getRelationshipEvidence,
+    createRelationshipEvidence
 };

@@ -5,26 +5,21 @@ const router = express.Router();
 const documentsController = require('../controllers/documents.controller');
 const upload = require('../middleware/upload.middleware');
 
-// Upload document with Multer debugging
+// Upload document
 router.post(
     '/upload',
-    (req, res, next) => {
-        console.log('CONTENT TYPE:', req.headers['content-type']);
-        next();
-    },
     upload.single('file'),
-    (req, res, next) => {
-        console.log('--- MULTER DEBUG ---');
-        console.log('Request body:', req.body);
-        console.log('Uploaded file:', req.file);
-        next();
-    },
     documentsController.uploadDocument
 );
 
 // Retrieve documents
 router.get('/', documentsController.getAllDocuments);
 router.get('/case/:caseId', documentsController.getDocumentsByCase);
+
+// Retrieve mentions extracted from a document
+router.get('/:id/mentions', documentsController.getDocumentMentions);
+
+// Retrieve one document
 router.get('/:id', documentsController.getDocumentById);
 
 // Create document record

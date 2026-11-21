@@ -14,4 +14,16 @@ router.get(
 
 router.post('/', relationshipsController.createRelationship);
 
+// Get evidence for a relationship
+router.get(
+    '/:relationshipId/evidence',
+    relationshipsController.getRelationshipEvidence
+);
+
+// Add evidence to a relationship
+router.post(
+    '/:relationshipId/evidence',
+    relationshipsController.createRelationshipEvidence
+);
+
 module.exports = router;

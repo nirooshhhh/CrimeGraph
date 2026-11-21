@@ -1,0 +1,19 @@
+
+const express = require('express');
+const router = express.Router();
+
+const transactionsController =
+    require('../controllers/transactions.controller');
+
+router.get('/', transactionsController.getAllTransactions);
+
+router.get(
+    '/entity/:entityId',
+    transactionsController.getTransactionsByEntity
+);
+
+router.get('/:id', transactionsController.getTransactionById);
+
+router.post('/', transactionsController.createTransaction);
+
+module.exports = router;

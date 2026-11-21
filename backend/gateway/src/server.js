@@ -1,3 +1,5 @@
+const transactionsRoutes = require('./routes/transactions.routes');
+const callRecordsRoutes = require('./routes/callRecords.routes');
 const sourcesRoutes = require('./routes/sources.routes');
 const documentsRoutes = require('./routes/documents.routes');
 const dashboardRoutes = require('./routes/dashboard.routes');
@@ -22,6 +24,8 @@ app.use('/api/graph', graphRoutes);
 app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/documents', documentsRoutes);
 app.use('/api/sources', sourcesRoutes);
+app.use('/api/call-records', callRecordsRoutes);
+app.use('/api/transactions', transactionsRoutes);
 // Health check
 app.get('/api/health', (req, res) => {
     res.status(200).json({
@@ -36,11 +40,6 @@ app.get('/', (req, res) => {
     res.send('Welcome to CrimeGraph API');
 });
 
-const PORT = process.env.PORT || 5000;
-
-app.listen(PORT, () => {
-    console.log(`CrimeGraph API running on http://localhost:${PORT}`);
-});
 
 const supabase = require('./config/supabase');
 
@@ -69,4 +68,10 @@ app.get('/api/db-check', async (req, res) => {
             error: error.message
         });
     }
+});
+
+const PORT = process.env.PORT || 5000;
+
+app.listen(PORT, () => {
+    console.log(`CrimeGraph API running on http://localhost:${PORT}`);
 });
