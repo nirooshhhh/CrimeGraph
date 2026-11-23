@@ -1,0 +1,165 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap');
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  *, *::before, *::after {
+    box-sizing: border-box;
+  }
+
+  html {
+    font-family: 'Inter', system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  body {
+    @apply bg-bg-primary text-text-primary;
+    margin: 0;
+    padding: 0;
+  }
+
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  ::-webkit-scrollbar-track {
+    @apply bg-bg-secondary;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    @apply bg-border-strong rounded-full;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    @apply bg-text-muted;
+  }
+}
+
+@layer components {
+  .card {
+    @apply bg-bg-secondary border border-border rounded-card p-4;
+  }
+  
+  .panel {
+    @apply bg-bg-elevated border border-border-subtle rounded-panel p-5;
+  }
+
+  .badge {
+    @apply inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium;
+  }
+
+  .badge-amber {
+    @apply badge bg-amber-forensic/20 text-amber-forensic border border-amber-forensic/30;
+  }
+
+  .badge-teal {
+    @apply badge bg-teal-forensic/20 text-teal-forensic border border-teal-forensic/30;
+  }
+
+  .badge-red {
+    @apply badge bg-status-error/20 text-status-error border border-status-error/30;
+  }
+
+  .badge-green {
+    @apply badge bg-status-success/20 text-status-success border border-status-success/30;
+  }
+
+  .badge-gray {
+    @apply badge bg-text-muted/20 text-text-secondary border border-border;
+  }
+
+  .btn {
+    @apply inline-flex items-center gap-2 px-4 py-2 rounded-lg font-medium text-sm transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-bg-primary disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+
+  .btn-primary {
+    @apply btn bg-amber-forensic text-bg-primary hover:bg-amber-light focus:ring-amber-forensic;
+  }
+
+  .btn-secondary {
+    @apply btn bg-bg-elevated border border-border text-text-primary hover:bg-bg-hover hover:border-border-strong focus:ring-border-strong;
+  }
+
+  .btn-danger {
+    @apply btn bg-status-error/10 border border-status-error/30 text-status-error hover:bg-status-error/20 focus:ring-status-error;
+  }
+
+  .btn-ghost {
+    @apply btn text-text-secondary hover:text-text-primary hover:bg-bg-elevated;
+  }
+
+  .input {
+    @apply w-full bg-bg-elevated border border-border rounded-lg px-3 py-2 text-sm text-text-primary placeholder-text-muted focus:outline-none focus:ring-2 focus:ring-amber-forensic focus:border-transparent transition-all;
+  }
+
+  .label {
+    @apply block text-xs font-medium text-text-secondary mb-1.5;
+  }
+
+  .stat-card {
+    @apply card flex flex-col gap-3 hover:border-border-strong transition-all duration-200;
+  }
+
+  .nav-item {
+    @apply flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-text-secondary hover:text-text-primary hover:bg-bg-elevated transition-all duration-200 cursor-pointer;
+  }
+
+  .nav-item-active {
+    @apply nav-item text-amber-forensic bg-amber-forensic/10 hover:bg-amber-forensic/15 hover:text-amber-forensic;
+  }
+
+  .table-row {
+    @apply border-b border-border-subtle last:border-0 hover:bg-bg-elevated/50 transition-colors;
+  }
+
+  .table-header {
+    @apply text-left text-xs font-semibold text-text-muted uppercase tracking-wider px-4 py-3;
+  }
+
+  .table-cell {
+    @apply px-4 py-3 text-sm text-text-primary;
+  }
+
+  .skeleton {
+    @apply bg-bg-elevated animate-pulse rounded;
+  }
+}
+
+@layer utilities {
+  .text-gradient-amber {
+    @apply bg-gradient-to-r from-amber-forensic to-amber-light bg-clip-text text-transparent;
+  }
+
+  .text-gradient-teal {
+    @apply bg-gradient-to-r from-teal-forensic to-teal-light bg-clip-text text-transparent;
+  }
+
+  .border-gradient {
+    border-image: linear-gradient(135deg, #F2A900, #43B8A5) 1;
+  }
+
+  .glass {
+    background: rgba(23, 29, 36, 0.85);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+  }
+}
+
+/* Cytoscape graph container */
+.cy-container {
+  width: 100%;
+  height: 100%;
+  background: #101419;
+}
+
+/* Animations */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
