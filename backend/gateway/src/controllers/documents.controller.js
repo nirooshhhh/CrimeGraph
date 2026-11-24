@@ -196,25 +196,34 @@ const detectEntities = (text) => {
 };
 
 // Save detected entities and their document mentions
-const saveDetectedEntities = async (caseId, documentId, text) => {
-    const mentions = detectEntities(text);
+const saveDetectedEntities = async (caseId, documentId, text, precomputedMentions = null) => {
+    const mentions = Array.isArray(precomputedMentions)
+        ? precomputedMentions
+        : detectEntities(text);
     const results = [];
+    const entityMap = new Map();
 
     for (const mention of mentions) {
-        let entity = await entitiesService.findEntity(
-            mention.entity_type,
-            mention.normalized_text
-        );
+        const entityKey = `${mention.entity_type}:${mention.normalized_text}`;
+        let entity = entityMap.get(entityKey);
 
         if (!entity) {
-            entity = await entitiesService.createEntity({
-                entity_type: mention.entity_type,
-                canonical_name: mention.mention_text,
-                normalized_name: mention.normalized_text
-            });
-        }
+            entity = await entitiesService.findEntity(
+                mention.entity_type,
+                mention.normalized_text
+            );
 
-        await casesService.linkEntityToCase(caseId, entity.id);
+            if (!entity) {
+                entity = await entitiesService.createEntity({
+                    entity_type: mention.entity_type,
+                    canonical_name: mention.mention_text,
+                    normalized_name: mention.normalized_text
+                });
+            }
+
+            await casesService.linkEntityToCase(caseId, entity.id);
+            entityMap.set(entityKey, entity);
+        }
 
         const savedMention = await entitiesService.createEntityMention({
             document_id: documentId,
@@ -277,6 +286,7 @@ const uploadDocument = async (req, res) => {
         // Extract text using Python NLP Service
         let extractedText = '';
         let nlpServiceUsed = false;
+        let nlpMentions = null;
 
         try {
             const formData = new FormData();
@@ -303,6 +313,9 @@ const uploadDocument = async (req, res) => {
 
             extractedText = nlpResult.extracted_text;
             nlpServiceUsed = true;
+            if (Array.isArray(nlpResult.mentions)) {
+                nlpMentions = nlpResult.mentions;
+            }
 
         } catch (error) {
             console.error('NLP Service unavailable, using local extraction:', error.message);
@@ -342,7 +355,8 @@ const uploadDocument = async (req, res) => {
             detectedEntities = await saveDetectedEntities(
                 case_id,
                 document.id,
-                extractedText
+                extractedText,
+                nlpMentions
             );
         } catch (error) {
             console.error('Entity extraction error:', error);

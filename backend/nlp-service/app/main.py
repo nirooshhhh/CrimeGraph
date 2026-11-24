@@ -1,9 +1,37 @@
-
+import logging
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, UploadFile, File, HTTPException
 import pymupdf
 import re
+import spacy
 
-app = FastAPI(title="CrimeGraph NLP Service")
+from app.extractors.entity_extractor import extract_entity_mentions
+
+logger = logging.getLogger("uvicorn.error")
+
+nlp_model = None
+
+try:
+    nlp_model = spacy.load("en_core_web_sm")
+    logger.info("spaCy model 'en_core_web_sm' loaded successfully.")
+except Exception as e:
+    logger.warning(f"Could not load spaCy model 'en_core_web_sm': {e}. Using regex fallback.")
+    nlp_model = None
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    global nlp_model
+    if nlp_model is None:
+        try:
+            nlp_model = spacy.load("en_core_web_sm")
+            logger.info("spaCy model 'en_core_web_sm' loaded successfully at lifespan startup.")
+        except Exception as e:
+            logger.warning(f"Lifespan: could not load spaCy model: {e}")
+    yield
+
+
+app = FastAPI(title="CrimeGraph NLP Service", lifespan=lifespan)
 
 
 @app.get("/health")
@@ -31,58 +59,20 @@ def extract_text(file_bytes, filename):
 
 
 def extract_entities(text):
-    entities = []
-
-    patterns = {
-        "phone": r"(?<!\d)(?:\+?91[\s-]?)?[6-9]\d{9}(?!\d)",
-        "email": r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b",
-        "vehicle": r"\b[A-Z]{2}\s?\d{1,2}\s?[A-Z]{1,3}\s?\d{4}\b"
-    }
-
-    for entity_type, pattern in patterns.items():
-        matches = re.findall(pattern, text, re.IGNORECASE)
-
-        for match in matches:
-            value = match.strip()
-
-            if not any(
-                e["value"].lower() == value.lower()
-                and e["type"] == entity_type
-                for e in entities
-            ):
-                entities.append({
-                    "value": value,
-                    "type": entity_type,
-                    "confidence": 0.95,
-                    "extraction_method": "rule_based"
-                })
-
-    # Basic person-name candidates.
-    # These are suggestions and should be reviewed before verification.
-    name_pattern = r"\b[A-Z][a-z]{2,}(?:\s+[A-Z][a-z]{2,}){1,2}\b"
-
-    excluded = {
-        "The Investigation",
-        "This Document",
-        "Police Department",
-        "Crime Graph"
-    }
-
-    for match in re.findall(name_pattern, text):
-        value = match.strip()
-
-        if value not in excluded and not any(
-            e["value"].lower() == value.lower()
-            for e in entities
-        ):
-            entities.append({
-                "value": value,
-                "type": "person",
-                "confidence": 0.55,
-                "extraction_method": "rule_based_candidate"
+    result = extract_entity_mentions(text, nlp_model)
+    seen = set()
+    deduped = []
+    for m in result["mentions"]:
+        key = (m["entity_type"], m["normalized_text"])
+        if key not in seen:
+            seen.add(key)
+            deduped.append({
+                "value": m["normalized_text"],
+                "type": m["entity_type"],
+                "confidence": m["confidence"],
+                "extraction_method": m["extraction_method"]
             })
-
-    return entities
+    return deduped
 
 
 @app.post("/api/extract")
@@ -105,15 +95,32 @@ async def extract_document(file: UploadFile = File(...)):
 
     try:
         text = extract_text(file_bytes, filename)
-        entities = extract_entities(text)
+        extraction_res = extract_entity_mentions(text, nlp_model)
+        mentions = extraction_res["mentions"]
+        ner_engine = extraction_res["ner_engine"]
+
+        seen = set()
+        deduped = []
+        for m in mentions:
+            key = (m["entity_type"], m["normalized_text"])
+            if key not in seen:
+                seen.add(key)
+                deduped.append({
+                    "value": m["normalized_text"],
+                    "type": m["entity_type"],
+                    "confidence": m["confidence"],
+                    "extraction_method": m["extraction_method"]
+                })
 
         return {
             "success": True,
             "file_name": filename,
             "text_length": len(text),
             "extracted_text": text,
-            "entity_count": len(entities),
-            "entities": entities
+            "entity_count": len(deduped),
+            "entities": deduped,
+            "mentions": mentions,
+            "ner_engine": ner_engine
         }
 
     except HTTPException:
