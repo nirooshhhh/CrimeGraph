@@ -1,438 +1,356 @@
-import React, { useState, useEffect } from 'react'
-import { useOutletContext } from 'react-router-dom'
-import {
-  ArrowLeftRight,
-  Search,
-  Filter,
-  Plus,
-  TrendingUp,
-  AlertTriangle,
-  Coins,
-  Shield,
-  Layers,
-  CheckCircle2,
-} from 'lucide-react'
-import { Card } from '../components/ui/Card'
-import { Button } from '../components/ui/Button'
-import { Input } from '../components/ui/Input'
-import { Modal } from '../components/ui/Modal'
-import { EmptyState } from '../components/ui/EmptyState'
-import {
-  ResponsiveContainer,
-  BarChart,
-  Bar,
-  XAxis,
-  YAxis,
-  Tooltip,
-} from 'recharts'
-import { transactionsService } from '../services/transactionsService'
-import { DEMO_TRANSACTIONS, DEMO_CASES } from '../data/demoData'
-import { Transaction, Case } from '../types'
-import { formatDate, formatCurrency, formatRelativeTime } from '../lib/utils'
+import React, { useState, useMemo } from 'react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { Link } from 'react-router-dom';
+import { ArrowLeftRight, Plus, ArrowRight, DollarSign, ExternalLink, CreditCard } from 'lucide-react';
+import { fetchTransactions, createTransaction, fetchSources } from '../api';
+import { DataTable, Column } from '../components/common/DataTable';
+import { Button } from '../components/common/Button';
+import { Modal } from '../components/common/Modal';
+import { Input, Select } from '../components/common/FormFields';
+import { Card } from '../components/common/Card';
+import { useEntityMap } from '../context/EntityMapContext';
+import { useToast } from '../context/ToastContext';
+import { getErrorMessage } from '../api/client';
+import type { Transaction, CreateTransactionPayload } from '../types';
 
 export const TransactionsPage: React.FC = () => {
-  const { cases, activeCaseId, isLiveApi } = useOutletContext<{
-    cases: Case[]
-    activeCaseId: string
-    isLiveApi: boolean
-  }>()
+  const queryClient = useQueryClient();
+  const { entities, getEntityName } = useEntityMap();
+  const { success, error: toastError } = useToast();
 
-  const [transactions, setTransactions] = useState<Transaction[]>(DEMO_TRANSACTIONS)
-  const [searchTerm, setSearchTerm] = useState('')
-  const [typeFilter, setTypeFilter] = useState('all')
-  const [flaggedOnly, setFlaggedOnly] = useState(false)
-  const [isLoading, setIsLoading] = useState(false)
-  const [isModalOpen, setIsModalOpen] = useState(false)
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [formValues, setFormValues] = useState<{
+    sender_entity_id: string;
+    receiver_entity_id: string;
+    amount: number;
+    transaction_time: string;
+    currency: string;
+    transaction_type: string;
+    transaction_reference: string;
+    source_id: string;
+  }>({
+    sender_entity_id: '',
+    receiver_entity_id: '',
+    amount: 10000,
+    transaction_time: new Date().toISOString().slice(0, 16),
+    currency: 'INR',
+    transaction_type: 'wire_transfer',
+    transaction_reference: '',
+    source_id: '',
+  });
 
-  // New Transaction Form
-  const [senderAccount, setSenderAccount] = useState('')
-  const [receiverAccount, setReceiverAccount] = useState('')
-  const [amount, setAmount] = useState(250000)
-  const [currency, setCurrency] = useState('USD')
-  const [txType, setTxType] = useState('SWIFT_WIRE')
-  const [referenceNumber, setReferenceNumber] = useState('')
-  const [isFlagged, setIsFlagged] = useState(false)
-  const [formCaseId, setFormCaseId] = useState(cases[0]?.id || 'case-001')
-  const [isSubmitting, setIsSubmitting] = useState(false)
+  const { data: transactions = [], isLoading } = useQuery({
+    queryKey: ['transactions'],
+    queryFn: fetchTransactions,
+  });
 
-  const fetchTransactions = async () => {
-    setIsLoading(true)
-    try {
-      if (isLiveApi) {
-        const data = await transactionsService.getTransactions()
-        if (data && data.length > 0) setTransactions(data)
-      }
-    } catch (err) {
-      console.warn('Failed loading transactions from live API', err)
-    } finally {
-      setIsLoading(false)
+  const { data: sources = [] } = useQuery({
+    queryKey: ['sources'],
+    queryFn: fetchSources,
+  });
+
+  // Totals per currency computed from real transaction rows
+  const totalsByCurrency = useMemo(() => {
+    const totals: Record<string, number> = {};
+    for (const t of transactions) {
+      const curr = (t.currency || 'INR').toUpperCase();
+      totals[curr] = (totals[curr] || 0) + Number(t.amount || 0);
     }
-  }
+    return totals;
+  }, [transactions]);
 
-  useEffect(() => {
-    fetchTransactions()
-  }, [isLiveApi])
-
-  const handleCreate = async (e: React.FormEvent) => {
-    e.preventDefault()
-    if (!senderAccount.trim() || !receiverAccount.trim() || !amount) return
-
-    setIsSubmitting(true)
-    try {
-      const payload = {
-        case_id: formCaseId,
-        sender_account: senderAccount.trim(),
-        receiver_account: receiverAccount.trim(),
-        amount: Number(amount),
-        currency: currency.toUpperCase(),
-        transaction_timestamp: new Date().toISOString(),
-        transaction_type: txType,
-        reference_number: referenceNumber.trim() || `TX-${Date.now()}`,
-        flagged: isFlagged,
+  const createMutation = useMutation({
+    mutationFn: (payload: CreateTransactionPayload) => {
+      if (payload.sender_entity_id === payload.receiver_entity_id) {
+        throw new Error('Sender and receiver entities must differ');
       }
+      return createTransaction(payload);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['transactions'] });
+      success('Financial transaction recorded successfully');
+      setIsModalOpen(false);
+      setFormValues({
+        sender_entity_id: '',
+        receiver_entity_id: '',
+        amount: 10000,
+        transaction_time: new Date().toISOString().slice(0, 16),
+        currency: 'INR',
+        transaction_type: 'wire_transfer',
+        transaction_reference: '',
+        source_id: '',
+      });
+    },
+    onError: (err) => {
+      toastError(getErrorMessage(err), 'Failed to record transaction');
+    },
+  });
 
-      if (isLiveApi) {
-        const created = await transactionsService.createTransaction(payload)
-        setTransactions((prev) => [created, ...prev])
-      } else {
-        const synthetic: Transaction = {
-          id: `tx-${Date.now()}`,
-          case_id: payload.case_id,
-          sender_account: payload.sender_account,
-          receiver_account: payload.receiver_account,
-          amount: payload.amount,
-          currency: payload.currency,
-          transaction_timestamp: payload.transaction_timestamp,
-          transaction_type: payload.transaction_type,
-          reference_number: payload.reference_number,
-          flagged: payload.flagged,
-          status: 'COMPLETED',
-        }
-        setTransactions((prev) => [synthetic, ...prev])
-      }
-
-      setIsModalOpen(false)
-      setSenderAccount('')
-      setReceiverAccount('')
-    } catch (err) {
-      console.error(err)
-    } finally {
-      setIsSubmitting(false)
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!formValues.sender_entity_id || !formValues.receiver_entity_id) {
+      toastError('Sender and receiver entities are required');
+      return;
     }
-  }
+    if (formValues.sender_entity_id === formValues.receiver_entity_id) {
+      toastError('Sender and receiver must be different entities');
+      return;
+    }
+    if (Number(formValues.amount) < 0) {
+      toastError('Amount must be non-negative');
+      return;
+    }
 
-  const filteredTransactions = transactions.filter((t) => {
-    const matchesSearch =
-      t.sender_account.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      t.receiver_account.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      (t.reference_number &&
-        t.reference_number.toLowerCase().includes(searchTerm.toLowerCase()))
-    const matchesType = typeFilter === 'all' || t.transaction_type === typeFilter
-    const matchesFlag = !flaggedOnly || t.flagged
-    const matchesCase = activeCaseId === 'all' || t.case_id === activeCaseId
+    const payload: CreateTransactionPayload = {
+      sender_entity_id: formValues.sender_entity_id,
+      receiver_entity_id: formValues.receiver_entity_id,
+      amount: Number(formValues.amount),
+      transaction_time: new Date(formValues.transaction_time).toISOString(),
+      currency: formValues.currency || 'INR',
+    };
+    if (formValues.transaction_type) payload.transaction_type = formValues.transaction_type;
+    if (formValues.transaction_reference) payload.transaction_reference = formValues.transaction_reference;
+    if (formValues.source_id) payload.source_id = formValues.source_id;
 
-    return matchesSearch && matchesType && matchesFlag && matchesCase
-  })
+    createMutation.mutate(payload);
+  };
 
-  // Aggregate stats
-  const totalAmount = filteredTransactions.reduce((acc, curr) => acc + (curr.amount || 0), 0)
-  const flaggedCount = filteredTransactions.filter((t) => t.flagged).length
-
-  // Chart data aggregated by type
-  const chartData = Object.entries(
-    filteredTransactions.reduce<Record<string, number>>((acc, curr) => {
-      const key = (curr.transaction_type || 'OTHER').replace(/_/g, ' ')
-      acc[key] = (acc[key] || 0) + curr.amount
-      return acc
-    }, {})
-  ).map(([name, total]) => ({
-    name,
-    amount: total,
-  }))
+  const columns: Column<Transaction>[] = [
+    {
+      key: 'sender_entity_id',
+      header: 'Sender Entity',
+      render: (row) => (
+        <Link
+          to={`/entities/${row.sender_entity_id}`}
+          className="font-medium text-text-primary hover:text-accent transition-colors flex items-center gap-1.5"
+        >
+          <CreditCard className="w-3.5 h-3.5 text-text-muted" />
+          <span>{getEntityName(row.sender_entity_id)}</span>
+          <ExternalLink className="w-3 h-3 text-text-muted opacity-0 hover:opacity-100" />
+        </Link>
+      ),
+    },
+    {
+      key: 'arrow',
+      header: '',
+      sortable: false,
+      render: () => <ArrowRight className="w-3.5 h-3.5 text-text-muted" />,
+    },
+    {
+      key: 'receiver_entity_id',
+      header: 'Beneficiary Entity',
+      render: (row) => (
+        <Link
+          to={`/entities/${row.receiver_entity_id}`}
+          className="font-medium text-text-primary hover:text-accent transition-colors flex items-center gap-1.5"
+        >
+          <CreditCard className="w-3.5 h-3.5 text-text-muted" />
+          <span>{getEntityName(row.receiver_entity_id)}</span>
+          <ExternalLink className="w-3 h-3 text-text-muted opacity-0 hover:opacity-100" />
+        </Link>
+      ),
+    },
+    {
+      key: 'amount',
+      header: 'Amount',
+      render: (row) => (
+        <span className="font-mono font-semibold text-text-primary tabular-nums">
+          {Number(row.amount).toLocaleString(undefined, {
+            minimumFractionDigits: 2,
+            maximumFractionDigits: 2,
+          })}{' '}
+          <span className="text-xs text-accent font-normal">{row.currency}</span>
+        </span>
+      ),
+    },
+    {
+      key: 'transaction_time',
+      header: 'Timestamp',
+      render: (row) => (
+        <span className="text-xs text-text-muted tabular-nums">
+          {new Date(row.transaction_time).toLocaleString()}
+        </span>
+      ),
+    },
+    {
+      key: 'transaction_type',
+      header: 'Method',
+      render: (row) => (
+        <span className="text-xs font-medium uppercase px-2 py-0.5 rounded bg-surface-raised border border-border text-text-secondary">
+          {row.transaction_type || 'transfer'}
+        </span>
+      ),
+    },
+    {
+      key: 'transaction_reference',
+      header: 'Ref / UTR',
+      render: (row) => (
+        <span className="font-mono text-xs text-text-muted">{row.transaction_reference || '—'}</span>
+      ),
+    },
+  ];
 
   return (
-    <div className="space-y-6 animate-fade-in">
-      {/* Header */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-2 border-b border-border-subtle">
+    <div className="space-y-6">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <h2 className="text-xl font-bold tracking-tight text-text-primary">
-            Financial Transaction Forensics
-          </h2>
-          <p className="text-xs text-text-muted mt-0.5">
-            Audit ledger of fund transfers, SWIFT messages, crypto escrows, and suspicious structuring patterns.
+          <h2 className="text-2xl font-bold tracking-tight text-text-primary">Financial Transactions</h2>
+          <p className="text-sm text-text-secondary mt-1">
+            Bank transfers, hawala movements, account credits, and currency flow forensics.
           </p>
         </div>
-        <Button
-          size="sm"
-          variant="primary"
-          onClick={() => setIsModalOpen(true)}
-          icon={<Plus className="w-4 h-4" />}
-          className="font-mono text-xs font-semibold"
-        >
-          Record Transaction Entry
+        <Button onClick={() => setIsModalOpen(true)} icon={<Plus className="w-4 h-4" />}>
+          Record Transaction
         </Button>
       </div>
 
-      {/* KPI Cards & Chart */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
-        <div className="space-y-3">
-          <Card className="p-4 bg-bg-secondary/80 border-border-subtle">
-            <span className="text-[11px] font-mono uppercase text-text-muted">Total Flow Analyzed</span>
-            <p className="text-2xl font-bold font-mono text-amber-forensic mt-1">
-              {formatCurrency(totalAmount, 'USD')}
-            </p>
-            <p className="text-[10px] text-text-muted font-mono mt-0.5">
-              Across {filteredTransactions.length} recorded transfers
-            </p>
+      {/* Currency Totals Cards (computed from rows) */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        {Object.entries(totalsByCurrency).length === 0 ? (
+          <Card className="col-span-full py-4 text-xs text-text-muted text-center">
+            No transaction currency totals recorded yet.
           </Card>
-
-          <Card className="p-4 bg-bg-secondary/80 border-border-subtle">
-            <span className="text-[11px] font-mono uppercase text-text-muted">Flagged Anomaly Wires</span>
-            <p className="text-2xl font-bold font-mono text-rose-400 mt-1">
-              {flaggedCount} Flagged
-            </p>
-            <p className="text-[10px] text-text-muted font-mono mt-0.5">
-              Exceeding SAR threshold or smurfing profile
-            </p>
-          </Card>
-        </div>
-
-        {/* Breakdown by Type Chart */}
-        <Card className="lg:col-span-2 p-4 bg-bg-secondary/80 border-border-subtle">
-          <div className="flex items-center justify-between mb-2">
-            <h3 className="text-xs font-semibold text-text-primary">Transfer Volume by Rail</h3>
-            <span className="text-[10px] font-mono text-text-muted">Aggregate Volume ($)</span>
-          </div>
-          <div className="h-36 w-full">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={chartData} margin={{ top: 5, right: 10, left: 10, bottom: 5 }}>
-                <XAxis dataKey="name" stroke="#6B7685" fontSize={10} tickLine={false} />
-                <YAxis stroke="#6B7685" fontSize={10} tickLine={false} />
-                <Tooltip
-                  formatter={(val: any) => formatCurrency(Number(val))}
-                  contentStyle={{
-                    backgroundColor: '#171D24',
-                    borderColor: '#2D3844',
-                    borderRadius: '8px',
-                    fontSize: '11px',
-                  }}
-                />
-                <Bar dataKey="amount" fill="#F2A900" radius={[4, 4, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-        </Card>
+        ) : (
+          Object.entries(totalsByCurrency).map(([curr, total]) => (
+            <Card key={curr}>
+              <div className="text-xs font-semibold uppercase text-text-muted flex items-center justify-between">
+                <span>Total Flow ({curr})</span>
+                <DollarSign className="w-3.5 h-3.5 text-accent" />
+              </div>
+              <div className="text-2xl font-bold text-text-primary tabular-nums mt-1">
+                {total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </div>
+              <div className="text-[11px] text-text-muted mt-1">Sum of recorded transfers</div>
+            </Card>
+          ))
+        )}
       </div>
 
-      {/* Filter and Search Bar */}
-      <Card className="p-3 bg-bg-secondary/80 border-border-subtle">
-        <div className="flex flex-col md:flex-row items-center gap-3">
-          <div className="relative flex-1 w-full">
-            <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-text-muted" />
-            <input
-              type="text"
-              placeholder="Search by sender account, recipient, or reference number..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="w-full bg-bg-elevated border border-border-subtle rounded-lg pl-8 pr-3 py-1.5 text-xs text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-1 focus:ring-amber-forensic"
-            />
-          </div>
+      {/* Table */}
+      <DataTable
+        data={transactions}
+        columns={columns}
+        searchPlaceholder="Search transactions by entity names, ref..."
+        searchFilter={(item, q) => {
+          const sName = getEntityName(item.sender_entity_id).toLowerCase();
+          const rName = getEntityName(item.receiver_entity_id).toLowerCase();
+          const ref = (item.transaction_reference || '').toLowerCase();
+          return sName.includes(q) || rName.includes(q) || ref.includes(q);
+        }}
+        isLoading={isLoading}
+        emptyTitle="No financial transactions recorded"
+        emptyDescription="Record transfers and money flows between sender and beneficiary entities."
+        emptyAction={
+          <Button size="sm" onClick={() => setIsModalOpen(true)} icon={<Plus className="w-3.5 h-3.5" />}>
+            Record Transaction
+          </Button>
+        }
+      />
 
-          <div className="flex items-center gap-2">
-            <select
-              value={typeFilter}
-              onChange={(e) => setTypeFilter(e.target.value)}
-              className="bg-bg-elevated border border-border-subtle rounded-lg px-2.5 py-1.5 text-xs text-text-primary focus:outline-none focus:ring-1 focus:ring-amber-forensic"
-            >
-              <option value="all">All Rail Types</option>
-              <option value="SWIFT_WIRE">SWIFT Wire</option>
-              <option value="INTERNAL_BOOK_TRANSFER">Book Transfer</option>
-              <option value="SEPA_TRANSFER">SEPA (EUR)</option>
-              <option value="CRYPTO_BLOCKCHAIN">Crypto Blockchain</option>
-              <option value="ACH_COMMERCIAL">Commercial ACH</option>
-            </select>
-
-            <button
-              onClick={() => setFlaggedOnly(!flaggedOnly)}
-              className={`px-3 py-1.5 rounded-lg text-xs font-mono font-medium border transition-colors cursor-pointer ${
-                flaggedOnly
-                  ? 'bg-rose-500/20 text-rose-400 border-rose-500/40 font-bold'
-                  : 'bg-bg-elevated text-text-secondary border-border-subtle'
-              }`}
-            >
-              Flagged Only
-            </button>
-          </div>
-        </div>
-      </Card>
-
-      {/* Transactions Table */}
-      <Card className="p-0 bg-bg-secondary/90 border-border-subtle overflow-hidden">
-        {filteredTransactions.length === 0 ? (
-          <div className="p-12 text-center text-xs text-text-muted">
-            No transaction records match the specified filters.
-          </div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs">
-              <thead>
-                <tr className="border-b border-border-subtle bg-bg-elevated/40 text-text-muted uppercase font-mono">
-                  <th className="py-3 px-4">Status / Alert</th>
-                  <th className="py-3 px-4">Sender Account</th>
-                  <th className="py-3 px-4">Beneficiary Account</th>
-                  <th className="py-3 px-4">Amount</th>
-                  <th className="py-3 px-4">Date</th>
-                  <th className="py-3 px-4">Type</th>
-                  <th className="py-3 px-4">Reference</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-border-subtle/50 font-mono">
-                {filteredTransactions.map((tx) => (
-                  <tr key={tx.id} className="hover:bg-bg-elevated/50 transition-colors">
-                    <td className="py-3 px-4">
-                      {tx.flagged ? (
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] bg-rose-500/20 text-rose-400 border border-rose-500/30 font-bold">
-                          FLAGGED
-                        </span>
-                      ) : (
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] bg-bg-elevated text-text-muted border border-border-subtle">
-                          NORMAL
-                        </span>
-                      )}
-                    </td>
-                    <td className="py-3 px-4 text-text-primary truncate max-w-[200px]">
-                      {tx.sender_account}
-                    </td>
-                    <td className="py-3 px-4 text-text-secondary truncate max-w-[200px]">
-                      {tx.receiver_account}
-                    </td>
-                    <td className="py-3 px-4 font-bold text-amber-forensic">
-                      {formatCurrency(tx.amount, tx.currency)}
-                    </td>
-                    <td className="py-3 px-4 text-text-muted font-sans text-xs">
-                      {formatDate(tx.transaction_timestamp)}
-                    </td>
-                    <td className="py-3 px-4 text-[10px] text-text-secondary">
-                      {tx.transaction_type}
-                    </td>
-                    <td className="py-3 px-4 text-text-muted text-[10px] truncate max-w-[140px]">
-                      {tx.reference_number || tx.id}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </Card>
-
-      {/* Modal: New Transaction Entry */}
+      {/* Modal */}
       <Modal
         isOpen={isModalOpen}
         onClose={() => setIsModalOpen(false)}
         title="Record Financial Transaction"
-        subtitle="POST /api/transactions — Ingest audited fund transfer record into case ledger."
-        maxWidth="md"
+        description="Document a money transfer or financial trail between two entities."
       >
-        <form onSubmit={handleCreate} className="space-y-4">
-          <div className="space-y-1.5">
-            <label className="block text-xs font-medium text-text-secondary">
-              Investigation Dossier
-            </label>
-            <select
-              value={formCaseId}
-              onChange={(e) => setFormCaseId(e.target.value)}
-              className="w-full bg-bg-elevated border border-border-subtle rounded-lg px-3 py-2 text-sm text-text-primary focus:outline-none focus:ring-1 focus:ring-amber-forensic"
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <Select
+              label="Sender Entity"
+              required
+              value={formValues.sender_entity_id}
+              onChange={(e) => setFormValues({ ...formValues, sender_entity_id: e.target.value })}
             >
-              {cases.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.case_number} — {c.title}
+              <option value="">-- Select Sender --</option>
+              {entities.map((e) => (
+                <option key={e.id} value={e.id}>
+                  {e.canonical_name} ({e.entity_type})
                 </option>
               ))}
-            </select>
+            </Select>
+
+            <Select
+              label="Beneficiary Entity"
+              required
+              value={formValues.receiver_entity_id}
+              onChange={(e) => setFormValues({ ...formValues, receiver_entity_id: e.target.value })}
+            >
+              <option value="">-- Select Beneficiary --</option>
+              {entities.map((e) => (
+                <option key={e.id} value={e.id}>
+                  {e.canonical_name} ({e.entity_type})
+                </option>
+              ))}
+            </Select>
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <Input
-              label="Sender Account / Wallet"
-              placeholder="Apex Global (CH-8921-USD)"
-              value={senderAccount}
-              onChange={(e) => setSenderAccount(e.target.value)}
+              label="Amount (≥ 0)"
+              type="number"
+              min="0"
+              step="0.01"
               required
+              value={formValues.amount}
+              onChange={(e) => setFormValues({ ...formValues, amount: parseFloat(e.target.value) || 0 })}
             />
-            <Input
-              label="Beneficiary Account / Wallet"
-              placeholder="Blackwood Trust (KY-3199-USD)"
-              value={receiverAccount}
-              onChange={(e) => setReceiverAccount(e.target.value)}
-              required
-            />
-          </div>
-
-          <div className="grid grid-cols-3 gap-3">
-            <div className="col-span-2">
-              <Input
-                label="Transfer Amount"
-                type="number"
-                value={amount}
-                onChange={(e) => setAmount(Number(e.target.value))}
-                required
-              />
-            </div>
             <Input
               label="Currency"
-              value={currency}
-              onChange={(e) => setCurrency(e.target.value)}
               required
+              placeholder="e.g. INR, USD, EUR, AED"
+              value={formValues.currency}
+              onChange={(e) => setFormValues({ ...formValues, currency: e.target.value.toUpperCase() })}
             />
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1.5">
-              <label className="block text-xs font-medium text-text-secondary">Payment Rail</label>
-              <select
-                value={txType}
-                onChange={(e) => setTxType(e.target.value)}
-                className="w-full bg-bg-elevated border border-border-subtle rounded-lg px-3 py-2 text-sm text-text-primary focus:outline-none focus:ring-1 focus:ring-amber-forensic"
-              >
-                <option value="SWIFT_WIRE">SWIFT Wire</option>
-                <option value="CRYPTO_BLOCKCHAIN">Crypto Blockchain</option>
-                <option value="INTERNAL_BOOK_TRANSFER">Book Transfer</option>
-                <option value="SEPA_TRANSFER">SEPA</option>
-                <option value="ACH_COMMERCIAL">ACH</option>
-              </select>
-            </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <Input
-              label="Reference / Wire ID"
-              placeholder="SWIFT-2024-99120"
-              value={referenceNumber}
-              onChange={(e) => setReferenceNumber(e.target.value)}
+              label="Transaction Time"
+              type="datetime-local"
+              required
+              value={formValues.transaction_time}
+              onChange={(e) => setFormValues({ ...formValues, transaction_time: e.target.value })}
+            />
+            <Input
+              label="Transaction Type"
+              placeholder="e.g. wire_transfer, cash, hawala, crypto"
+              value={formValues.transaction_type}
+              onChange={(e) => setFormValues({ ...formValues, transaction_type: e.target.value })}
             />
           </div>
 
-          <div className="flex items-center gap-2 pt-2">
-            <input
-              type="checkbox"
-              id="flagCheck"
-              checked={isFlagged}
-              onChange={(e) => setIsFlagged(e.target.checked)}
-              className="rounded bg-bg-elevated border-border text-amber-forensic focus:ring-amber-forensic"
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <Input
+              label="Reference / UTR / TxID"
+              placeholder="e.g. UTR-20261124-9981"
+              value={formValues.transaction_reference}
+              onChange={(e) => setFormValues({ ...formValues, transaction_reference: e.target.value })}
             />
-            <label htmlFor="flagCheck" className="text-xs text-text-primary font-medium cursor-pointer">
-              Flag as suspicious anomaly (Requires SAR review)
-            </label>
+            <Select
+              label="Originating Source (Optional)"
+              value={formValues.source_id}
+              onChange={(e) => setFormValues({ ...formValues, source_id: e.target.value })}
+            >
+              <option value="">-- No Source Linked --</option>
+              {sources.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.source_name}
+                </option>
+              ))}
+            </Select>
           </div>
 
-          <div className="flex items-center justify-end gap-3 pt-3 border-t border-border-subtle">
-            <Button type="button" variant="ghost" size="sm" onClick={() => setIsModalOpen(false)}>
+          <div className="flex items-center justify-end gap-3 pt-3 border-t border-border">
+            <Button type="button" variant="secondary" onClick={() => setIsModalOpen(false)}>
               Cancel
             </Button>
-            <Button type="submit" variant="primary" size="sm" isLoading={isSubmitting}>
-              Commit Transaction
+            <Button type="submit" isLoading={createMutation.isPending}>
+              Save Transaction
             </Button>
           </div>
         </form>
       </Modal>
     </div>
-  )
-}
+  );
+};

@@ -1,367 +1,258 @@
-import React, { useState, useEffect } from 'react'
-import { useNavigate, useOutletContext } from 'react-router-dom'
-import {
-  FolderOpen,
-  Search,
-  Filter,
-  Plus,
-  ArrowUpDown,
-  ExternalLink,
-  Users,
-  GitBranch,
-  FileText,
-  ShieldAlert,
-  Calendar,
-} from 'lucide-react'
-import { Card } from '../components/ui/Card'
-import { Button } from '../components/ui/Button'
-import { Input } from '../components/ui/Input'
-import { Modal } from '../components/ui/Modal'
-import { EmptyState } from '../components/ui/EmptyState'
-import { casesService } from '../services/casesService'
-import { DEMO_CASES } from '../data/demoData'
-import { Case } from '../types'
-import {
-  formatDate,
-  formatRelativeTime,
-  SEVERITY_BADGES,
-  STATUS_BADGES,
-} from '../lib/utils'
+import React, { useState } from 'react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useNavigate } from 'react-router-dom';
+import { Briefcase, Plus, ArrowRight, Calendar, User, ShieldAlert } from 'lucide-react';
+import { fetchCases, createCase } from '../api';
+import { DataTable, Column } from '../components/common/DataTable';
+import { Button } from '../components/common/Button';
+import { Modal } from '../components/common/Modal';
+import { Input, Textarea } from '../components/common/FormFields';
+import { StatusBadge } from '../components/common/Badge';
+import { useToast } from '../context/ToastContext';
+import { getErrorMessage } from '../api/client';
+import type { Case, CreateCasePayload } from '../types';
 
 export const InvestigationsPage: React.FC = () => {
-  const navigate = useNavigate()
-  const { isLiveApi } = useOutletContext<{ isLiveApi: boolean }>()
+  const navigate = useNavigate();
+  const queryClient = useQueryClient();
+  const { success, error: toastError } = useToast();
 
-  const [cases, setCases] = useState<Case[]>(DEMO_CASES)
-  const [searchTerm, setSearchTerm] = useState('')
-  const [categoryFilter, setCategoryFilter] = useState('all')
-  const [statusFilter, setStatusFilter] = useState('all')
-  const [sortBy, setSortBy] = useState<'date' | 'priority' | 'title'>('date')
-  const [isLoading, setIsLoading] = useState(false)
-  const [isModalOpen, setIsModalOpen] = useState(false)
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [formValues, setFormValues] = useState<CreateCasePayload>({
+    case_number: '',
+    title: '',
+    description: '',
+    status: 'open',
+    priority: 'medium',
+    created_by: '',
+  });
 
-  // New Case Form
-  const [title, setTitle] = useState('')
-  const [description, setDescription] = useState('')
-  const [category, setCategory] = useState('financial_crime')
-  const [priority, setPriority] = useState('high')
-  const [leadInvestigator, setLeadInvestigator] = useState('Analyst R. Vance')
-  const [isCreating, setIsCreating] = useState(false)
+  const {
+    data: cases = [],
+    isLoading,
+    refetch,
+  } = useQuery({
+    queryKey: ['cases'],
+    queryFn: fetchCases,
+  });
 
-  const fetchCases = async () => {
-    setIsLoading(true)
-    try {
-      if (isLiveApi) {
-        const data = await casesService.getCases()
-        if (data && data.length > 0) setCases(data)
-      }
-    } catch (e) {
-      console.warn('Failed to load live cases', e)
-    } finally {
-      setIsLoading(false)
+  const createMutation = useMutation({
+    mutationFn: (payload: CreateCasePayload) => {
+      // Omit blank optional fields
+      const cleaned: CreateCasePayload = {
+        case_number: payload.case_number.trim(),
+        title: payload.title.trim(),
+      };
+      if (payload.description?.trim()) cleaned.description = payload.description.trim();
+      if (payload.status?.trim()) cleaned.status = payload.status.trim();
+      if (payload.priority?.trim()) cleaned.priority = payload.priority.trim();
+      if (payload.created_by?.trim()) cleaned.created_by = payload.created_by.trim();
+      return createCase(cleaned);
+    },
+    onSuccess: (newCase) => {
+      queryClient.invalidateQueries({ queryKey: ['cases'] });
+      queryClient.invalidateQueries({ queryKey: ['dashboard-stats'] });
+      success(`Investigation ${newCase.case_number} created successfully`);
+      setIsModalOpen(false);
+      setFormValues({
+        case_number: '',
+        title: '',
+        description: '',
+        status: 'open',
+        priority: 'medium',
+        created_by: '',
+      });
+      navigate(`/cases/${newCase.id}`);
+    },
+    onError: (err) => {
+      toastError(getErrorMessage(err), 'Failed to create investigation');
+    },
+  });
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!formValues.case_number.trim() || !formValues.title.trim()) {
+      toastError('Case number and title are required');
+      return;
     }
-  }
+    createMutation.mutate(formValues);
+  };
 
-  useEffect(() => {
-    fetchCases()
-  }, [isLiveApi])
-
-  const handleCreate = async (e: React.FormEvent) => {
-    e.preventDefault()
-    if (!title.trim()) return
-    setIsCreating(true)
-    try {
-      if (isLiveApi) {
-        const created = await casesService.createCase({
-          title: title.trim(),
-          description: description.trim(),
-          category,
-          priority,
-          lead_investigator: leadInvestigator.trim(),
-        })
-        setCases((prev) => [created, ...prev])
-      } else {
-        const synthetic: Case = {
-          id: `case-${Date.now()}`,
-          case_number: `CR-2024-${Math.floor(1000 + Math.random() * 9000)}`,
-          title: title.trim(),
-          description: description.trim(),
-          category,
-          status: 'active',
-          priority: priority as any,
-          lead_investigator: leadInvestigator.trim(),
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-          entity_count: 0,
-          relationship_count: 0,
-          document_count: 0,
-          alert_count: 0,
-        }
-        setCases((prev) => [synthetic, ...prev])
-      }
-      setIsModalOpen(false)
-      setTitle('')
-      setDescription('')
-    } catch (err) {
-      console.error(err)
-    } finally {
-      setIsCreating(false)
-    }
-  }
-
-  // Filter & Sort
-  const filteredCases = cases
-    .filter((c) => {
-      const matchesSearch =
-        c.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        c.case_number.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        (c.description && c.description.toLowerCase().includes(searchTerm.toLowerCase()))
-      const matchesCat = categoryFilter === 'all' || c.category === categoryFilter
-      const matchesStat = statusFilter === 'all' || c.status === statusFilter
-      return matchesSearch && matchesCat && matchesStat
-    })
-    .sort((a, b) => {
-      if (sortBy === 'priority') {
-        const weights: Record<string, number> = { critical: 4, high: 3, medium: 2, low: 1 }
-        return (weights[b.priority] || 0) - (weights[a.priority] || 0)
-      }
-      if (sortBy === 'title') {
-        return a.title.localeCompare(b.title)
-      }
-      return new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
-    })
+  const columns: Column<Case>[] = [
+    {
+      key: 'case_number',
+      header: 'Case Number',
+      render: (row) => (
+        <span className="font-mono font-semibold text-accent flex items-center gap-1.5">
+          <Briefcase className="w-3.5 h-3.5 text-text-muted" />
+          {row.case_number}
+        </span>
+      ),
+    },
+    {
+      key: 'title',
+      header: 'Title & Summary',
+      render: (row) => (
+        <div className="max-w-md">
+          <div className="font-medium text-text-primary truncate">{row.title}</div>
+          {row.description && (
+            <div className="text-xs text-text-muted truncate mt-0.5">{row.description}</div>
+          )}
+        </div>
+      ),
+    },
+    {
+      key: 'status',
+      header: 'Status',
+      render: (row) => <StatusBadge status={row.status} />,
+    },
+    {
+      key: 'priority',
+      header: 'Priority',
+      render: (row) => (
+        <span className="text-xs font-medium uppercase px-2 py-0.5 rounded bg-surface-raised border border-border text-text-secondary">
+          {row.priority || 'standard'}
+        </span>
+      ),
+    },
+    {
+      key: 'created_by',
+      header: 'Lead Analyst',
+      render: (row) => (
+        <span className="text-xs text-text-secondary flex items-center gap-1">
+          <User className="w-3 h-3 text-text-muted" />
+          {row.created_by || 'Unassigned'}
+        </span>
+      ),
+    },
+    {
+      key: 'created_at',
+      header: 'Opened Date',
+      render: (row) => (
+        <span className="text-xs text-text-muted tabular-nums">
+          {row.created_at ? new Date(row.created_at).toLocaleDateString() : '—'}
+        </span>
+      ),
+    },
+    {
+      key: 'actions',
+      header: '',
+      sortable: false,
+      align: 'right',
+      render: () => (
+        <span className="text-xs text-accent flex items-center gap-1 justify-end font-medium">
+          Open Case <ArrowRight className="w-3.5 h-3.5" />
+        </span>
+      ),
+    },
+  ];
 
   return (
-    <div className="space-y-6 animate-fade-in">
+    <div className="space-y-6">
       {/* Header */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-2 border-b border-border-subtle">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <h2 className="text-xl font-bold tracking-tight text-text-primary">
-            Active Criminal Investigations
-          </h2>
-          <p className="text-xs text-text-muted mt-0.5">
-            Operational case dossiers, jurisdictional boundaries, and cross-case intelligence indices.
+          <h2 className="text-2xl font-bold tracking-tight text-text-primary">Investigations</h2>
+          <p className="text-sm text-text-secondary mt-1">
+            Active criminal cases, intelligence dossiers, and cross-source investigations.
           </p>
         </div>
         <Button
-          size="sm"
-          variant="primary"
           onClick={() => setIsModalOpen(true)}
           icon={<Plus className="w-4 h-4" />}
-          className="font-mono text-xs font-semibold"
         >
-          Initialize Dossier
+          New Investigation
         </Button>
       </div>
 
-      {/* Filter and Search Bar */}
-      <Card className="p-4 bg-bg-secondary/80 border-border-subtle">
-        <div className="flex flex-col md:flex-row items-center gap-3">
-          <div className="relative flex-1 w-full">
-            <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-text-muted" />
-            <input
-              type="text"
-              placeholder="Filter by case number, title, or keywords..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="w-full bg-bg-elevated border border-border-subtle rounded-lg pl-9 pr-4 py-2 text-xs text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-1 focus:ring-amber-forensic"
-            />
-          </div>
+      {/* Table */}
+      <DataTable
+        data={cases}
+        columns={columns}
+        searchPlaceholder="Search cases by number, title, lead analyst..."
+        onRowClick={(row) => navigate(`/cases/${row.id}`)}
+        isLoading={isLoading}
+        emptyTitle="No investigations registered"
+        emptyDescription="Create your first investigation case to link suspects, evidence files, and intelligence sources."
+        emptyAction={
+          <Button size="sm" onClick={() => setIsModalOpen(true)} icon={<Plus className="w-3.5 h-3.5" />}>
+            Create Investigation
+          </Button>
+        }
+      />
 
-          <div className="flex items-center gap-2 w-full md:w-auto">
-            <select
-              value={categoryFilter}
-              onChange={(e) => setCategoryFilter(e.target.value)}
-              className="bg-bg-elevated border border-border-subtle rounded-lg px-3 py-2 text-xs text-text-primary focus:outline-none focus:ring-1 focus:ring-amber-forensic"
-            >
-              <option value="all">All Offense Types</option>
-              <option value="financial_crime">Financial Crime</option>
-              <option value="organized_crime">Organized Crime</option>
-              <option value="cybercrime">Cybercrime</option>
-              <option value="narcotics">Narcotics</option>
-              <option value="corruption">Public Corruption</option>
-              <option value="smuggling">Smuggling / Maritime</option>
-            </select>
-
-            <select
-              value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value)}
-              className="bg-bg-elevated border border-border-subtle rounded-lg px-3 py-2 text-xs text-text-primary focus:outline-none focus:ring-1 focus:ring-amber-forensic"
-            >
-              <option value="all">All Statuses</option>
-              <option value="active">Active</option>
-              <option value="under_review">Under Review</option>
-              <option value="closed">Closed</option>
-            </select>
-
-            <select
-              value={sortBy}
-              onChange={(e) => setSortBy(e.target.value as any)}
-              className="bg-bg-elevated border border-border-subtle rounded-lg px-3 py-2 text-xs text-text-primary focus:outline-none focus:ring-1 focus:ring-amber-forensic"
-            >
-              <option value="date">Sort by Date</option>
-              <option value="priority">Sort by Priority</option>
-              <option value="title">Sort by Title</option>
-            </select>
-          </div>
-        </div>
-      </Card>
-
-      {/* Cases List */}
-      {filteredCases.length === 0 ? (
-        <EmptyState
-          title="No Investigation Files Found"
-          description="Adjust your search criteria or register a new criminal investigation dossier."
-          actionLabel="Create Dossier"
-          onAction={() => setIsModalOpen(true)}
-        />
-      ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-          {filteredCases.map((c) => (
-            <Card
-              key={c.id}
-              onClick={() => navigate(`/investigations/${c.id}`)}
-              interactive
-              glow="amber"
-              className="p-5 flex flex-col justify-between group space-y-4 bg-bg-secondary/90 border-border-subtle hover:border-amber-forensic/40"
-            >
-              <div className="space-y-3">
-                <div className="flex items-start justify-between gap-2">
-                  <div className="flex items-center gap-1.5 flex-wrap">
-                    <span className="font-mono text-xs font-bold text-amber-forensic tracking-wider">
-                      {c.case_number}
-                    </span>
-                    <span className={`badge ${STATUS_BADGES[c.status] || 'badge-gray'}`}>
-                      {c.status}
-                    </span>
-                    <span className={`badge ${SEVERITY_BADGES[c.priority] || 'badge-gray'}`}>
-                      {c.priority}
-                    </span>
-                  </div>
-                  <ExternalLink className="w-4 h-4 text-text-muted group-hover:text-amber-forensic transition-colors flex-shrink-0" />
-                </div>
-
-                <div>
-                  <h3 className="text-sm font-bold text-text-primary group-hover:text-amber-light transition-colors line-clamp-1">
-                    {c.title}
-                  </h3>
-                  <p className="text-xs text-text-muted mt-1.5 line-clamp-2 leading-relaxed">
-                    {c.description || 'No operational summary provided.'}
-                  </p>
-                </div>
-              </div>
-
-              {/* Metrics & Metadata */}
-              <div className="pt-3 border-t border-border-subtle space-y-2.5">
-                <div className="grid grid-cols-3 gap-2 text-center">
-                  <div className="bg-bg-elevated/40 p-1.5 rounded border border-border-subtle/40">
-                    <span className="text-xs font-mono font-bold text-sky-400">
-                      {c.entity_count ?? '—'}
-                    </span>
-                    <p className="text-[9px] text-text-muted uppercase font-mono">Entities</p>
-                  </div>
-                  <div className="bg-bg-elevated/40 p-1.5 rounded border border-border-subtle/40">
-                    <span className="text-xs font-mono font-bold text-teal-forensic">
-                      {c.relationship_count ?? '—'}
-                    </span>
-                    <p className="text-[9px] text-text-muted uppercase font-mono">Links</p>
-                  </div>
-                  <div className="bg-bg-elevated/40 p-1.5 rounded border border-border-subtle/40">
-                    <span className="text-xs font-mono font-bold text-purple-400">
-                      {c.document_count ?? '—'}
-                    </span>
-                    <p className="text-[9px] text-text-muted uppercase font-mono">Docs</p>
-                  </div>
-                </div>
-
-                <div className="flex items-center justify-between text-[11px] text-text-muted font-mono pt-1">
-                  <span className="truncate max-w-[150px]">
-                    {c.lead_investigator || 'Unit ISE'}
-                  </span>
-                  <span>{formatRelativeTime(c.created_at)}</span>
-                </div>
-              </div>
-            </Card>
-          ))}
-        </div>
-      )}
-
-      {/* Create Modal */}
+      {/* New Investigation Dialog */}
       <Modal
         isOpen={isModalOpen}
         onClose={() => setIsModalOpen(false)}
-        title="Initialize Investigation Dossier"
-        subtitle="POST /api/cases — Register official investigation record in graph database."
+        title="Open New Investigation"
+        description="Register a new case file in the CrimeGraph intelligence repository."
       >
-        <form onSubmit={handleCreate} className="space-y-4">
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <Input
+              label="Case Number"
+              required
+              placeholder="e.g. CR-2026-0842"
+              value={formValues.case_number}
+              onChange={(e) => setFormValues({ ...formValues, case_number: e.target.value })}
+            />
+            <Input
+              label="Lead Analyst / Created By"
+              placeholder="e.g. Agent R. Sharma"
+              value={formValues.created_by || ''}
+              onChange={(e) => setFormValues({ ...formValues, created_by: e.target.value })}
+            />
+          </div>
+
           <Input
-            label="Case / Operation Title"
-            placeholder="e.g., Operation DarkHorizon"
-            value={title}
-            onChange={(e) => setTitle(e.target.value)}
+            label="Investigation Title"
             required
+            placeholder="e.g. Cyber Extortion & Syndicate Money Laundering"
+            value={formValues.title}
+            onChange={(e) => setFormValues({ ...formValues, title: e.target.value })}
           />
 
-          <div className="space-y-1.5">
-            <label className="block text-xs font-medium text-text-secondary">Offense Category</label>
-            <select
-              value={category}
-              onChange={(e) => setCategory(e.target.value)}
-              className="w-full bg-bg-elevated border border-border-subtle rounded-lg px-3 py-2 text-sm text-text-primary focus:outline-none focus:ring-1 focus:ring-amber-forensic"
-            >
-              <option value="financial_crime">Financial Crime / Money Laundering</option>
-              <option value="organized_crime">Organized Crime Syndicate</option>
-              <option value="cybercrime">Cybercrime / Dark Web Escrow</option>
-              <option value="narcotics">Narcotics Distribution</option>
-              <option value="corruption">Public Corruption</option>
-              <option value="smuggling">Smuggling & Port Logistics</option>
-            </select>
-          </div>
+          <Textarea
+            label="Description / Case Brief"
+            placeholder="Key facts, suspected activities, and operational objectives..."
+            rows={3}
+            value={formValues.description || ''}
+            onChange={(e) => setFormValues({ ...formValues, description: e.target.value })}
+          />
 
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1.5">
-              <label className="block text-xs font-medium text-text-secondary">Priority Level</label>
-              <select
-                value={priority}
-                onChange={(e) => setPriority(e.target.value)}
-                className="w-full bg-bg-elevated border border-border-subtle rounded-lg px-3 py-2 text-sm text-text-primary focus:outline-none focus:ring-1 focus:ring-amber-forensic"
-              >
-                <option value="critical">Critical</option>
-                <option value="high">High</option>
-                <option value="medium">Medium</option>
-                <option value="low">Low</option>
-              </select>
-            </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <Input
-              label="Assigned Lead Agent"
-              value={leadInvestigator}
-              onChange={(e) => setLeadInvestigator(e.target.value)}
+              label="Status"
+              placeholder="e.g. open, in_progress, under_review"
+              value={formValues.status || ''}
+              onChange={(e) => setFormValues({ ...formValues, status: e.target.value })}
+              helperText="Allowed values free-text per backend contract"
+            />
+            <Input
+              label="Priority"
+              placeholder="e.g. low, medium, high, critical"
+              value={formValues.priority || ''}
+              onChange={(e) => setFormValues({ ...formValues, priority: e.target.value })}
+              helperText="Allowed values free-text per backend contract"
             />
           </div>
 
-          <div className="space-y-1.5">
-            <label className="block text-xs font-medium text-text-secondary">
-              Investigative Scope & Summary
-            </label>
-            <textarea
-              rows={3}
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              placeholder="Describe criminal syndication, operational leads, and targeted jurisdictions..."
-              className="w-full bg-bg-elevated border border-border-subtle rounded-lg px-3 py-2 text-sm text-text-primary focus:outline-none focus:ring-1 focus:ring-amber-forensic resize-none"
-            />
-          </div>
-
-          <div className="flex items-center justify-end gap-3 pt-3 border-t border-border-subtle">
-            <Button type="button" variant="ghost" size="sm" onClick={() => setIsModalOpen(false)}>
+          <div className="flex items-center justify-end gap-3 pt-3 border-t border-border">
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => setIsModalOpen(false)}
+              disabled={createMutation.isPending}
+            >
               Cancel
             </Button>
-            <Button type="submit" variant="primary" size="sm" isLoading={isCreating}>
-              Create Investigation
+            <Button type="submit" isLoading={createMutation.isPending}>
+              Create Case File
             </Button>
           </div>
         </form>
       </Modal>
     </div>
-  )
-}
+  );
+};

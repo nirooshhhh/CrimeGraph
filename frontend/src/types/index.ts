@@ -1,274 +1,359 @@
-// ============================================================================
-// CRIMEGRAPH — Types & Domain Models
-// Tagline: Every clue has a connection.
-// ============================================================================
+// API Response envelope types
+export interface ApiResponse<T> {
+  success: boolean;
+  message?: string;
+  data: T;
+  error?: string;
+}
 
-export type EntityType = 'person' | 'phone' | 'vehicle' | 'location' | 'organization'
+export interface ApiListResponse<T> {
+  success: boolean;
+  count: number;
+  data: T[];
+  message?: string;
+  error?: string;
+}
 
-export type CaseStatus = 'active' | 'under_review' | 'closed' | 'archived'
-export type CasePriority = 'low' | 'medium' | 'high' | 'critical'
-export type CaseCategory =
-  | 'financial_crime'
-  | 'organized_crime'
-  | 'narcotics'
-  | 'cybercrime'
-  | 'corruption'
-  | 'human_trafficking'
-  | 'smuggling'
-  | 'other'
+// Health check
+export interface HealthStatus {
+  success: boolean;
+  message: string;
+  status: string;
+}
 
+// Dashboard statistics
+export interface DashboardStats {
+  totalCases: number;
+  totalEntities: number;
+  totalRelationships: number;
+  totalDocuments: number;
+  totalAlerts: number;
+}
+
+// 02 Case Management
 export interface Case {
-  id: string
-  case_number: string
-  title: string
-  description?: string
-  category: CaseCategory | string
-  status: CaseStatus | string
-  priority: CasePriority | string
-  lead_investigator?: string
-  created_at: string
-  updated_at: string
-  // Optional aggregated stats returned by API or calculated
-  entity_count?: number
-  relationship_count?: number
-  document_count?: number
-  alert_count?: number
+  id: string;
+  case_number: string;
+  title: string;
+  description?: string | null;
+  status?: string | null;
+  priority?: string | null;
+  created_by?: string | null;
+  created_at?: string;
+  updated_at?: string;
 }
 
-export interface Entity {
-  id: string
-  case_id?: string
-  case_ids?: string[]
-  entity_type: EntityType
-  name?: string
-  label?: string
-  identifier?: string
-  normalized_value?: string
-  confidence_score?: number
-  risk_level?: 'low' | 'medium' | 'high' | 'critical'
-  attributes?: Record<string, any>
-  created_at: string
-  updated_at?: string
-  is_verified?: boolean
+export interface CreateCasePayload {
+  case_number: string;
+  title: string;
+  description?: string;
+  status?: string;
+  priority?: string;
+  created_by?: string;
 }
 
-export interface EntityAlias {
-  id: string
-  entity_id: string
-  alias: string
-  alias_type?: string
-  source?: string
-  created_at?: string
+// Sources
+export interface Source {
+  id: string;
+  case_id?: string | null;
+  source_type: string;
+  source_name: string;
+  description?: string | null;
+  reference_code?: string | null;
+  created_at?: string;
 }
 
-export interface Relationship {
-  id: string
-  case_id: string
-  source_id?: string
-  target_id?: string
-  source_entity_id?: string
-  target_entity_id?: string
-  relationship_type: string
-  label?: string
-  confidence?: number
-  weight?: number
-  evidence_count?: number
-  notes?: string
-  first_seen?: string
-  last_seen?: string
-  created_at?: string
-  source_entity?: Entity
-  target_entity?: Entity
+export interface CreateSourcePayload {
+  source_type: string;
+  source_name: string;
+  case_id?: string;
+  description?: string;
+  reference_code?: string;
 }
 
-export interface RelationshipEvidence {
-  id: string
-  relationship_id: string
-  document_id?: string
-  document_name?: string
-  snippet?: string
-  confidence?: number
-  discovered_at?: string
-  notes?: string
+// Call Records
+export interface CallRecord {
+  id: string;
+  caller_entity_id: string;
+  receiver_entity_id: string;
+  call_time: string;
+  duration_seconds: number;
+  call_type?: string | null;
+  reference_code?: string | null;
+  source_id?: string | null;
+  created_at?: string;
 }
 
-export interface DocumentItem {
-  id: string
-  case_id: string
-  title?: string
-  filename: string
-  original_filename?: string
-  file_size?: number
-  mime_type?: string
-  file_type?: string
-  upload_date?: string
-  created_at?: string
-  processed_at?: string
-  status: 'pending' | 'processing' | 'processed' | 'failed'
-  mention_count?: number
-  file_url?: string
+export interface CreateCallRecordPayload {
+  caller_entity_id: string;
+  receiver_entity_id: string;
+  call_time: string;
+  duration_seconds: number;
+  call_type?: string;
+  reference_code?: string;
+  source_id?: string;
+}
+
+// Transactions
+export interface Transaction {
+  id: string;
+  sender_entity_id: string;
+  receiver_entity_id: string;
+  amount: number;
+  transaction_time: string;
+  currency: string;
+  transaction_type?: string | null;
+  transaction_reference?: string | null;
+  source_id?: string | null;
+  created_at?: string;
+}
+
+export interface CreateTransactionPayload {
+  sender_entity_id: string;
+  receiver_entity_id: string;
+  amount: number;
+  transaction_time: string;
+  currency?: string;
+  transaction_type?: string;
+  transaction_reference?: string;
+  source_id?: string;
+}
+
+// 03 Document Intelligence
+export interface Document {
+  id: string;
+  case_id: string;
+  source_id?: string | null;
+  file_name: string;
+  file_type: string;
+  storage_path: string;
+  file_hash?: string;
+  extracted_text?: string | null;
+  processing_status: string;
+  uploaded_at: string;
 }
 
 export interface DocumentMention {
-  id: string
-  document_id: string
-  entity_id?: string
-  text: string
-  entity_type: EntityType
-  confidence: number
-  offset_start?: number
-  offset_end?: number
-  is_verified?: boolean
+  id: string;
+  document_id: string;
+  resolved_entity_id?: string | null;
+  entity_type: EntityType;
+  mention_text: string;
+  normalized_text: string;
+  start_offset: number;
+  end_offset: number;
+  confidence: number;
+  extraction_method: string;
+  created_at?: string;
 }
 
-export type MatchReviewStatus = 'pending' | 'approved' | 'rejected' | 'further_review'
+export interface DocumentUploadResponse {
+  success: boolean;
+  message: string;
+  data: Document;
+  extraction?: {
+    textLength: number;
+    nlpServiceUsed: boolean;
+    entitiesDetected: number;
+    entities: Array<{
+      entity_id: string;
+      entity_type: EntityType;
+      mention: string;
+      mention_id?: string;
+    }>;
+    entityExtractionError?: string | null;
+  };
+}
+
+// 04 Entity Matching
+export type EntityType =
+  | 'person'
+  | 'phone'
+  | 'vehicle'
+  | 'location'
+  | 'organization'
+  | 'account'
+  | 'other';
+
+export interface Entity {
+  id: string;
+  entity_type: EntityType;
+  canonical_name: string;
+  normalized_name?: string;
+  attributes?: Record<string, any> | null;
+  verification_status?: string;
+  created_at?: string;
+}
+
+export interface CreateEntityPayload {
+  entity_type: EntityType;
+  canonical_name: string;
+  attributes?: Record<string, any>;
+}
+
+export interface EntityAlias {
+  id: string;
+  entity_id: string;
+  alias_name: string;
+  normalized_alias?: string;
+  source_type?: string;
+  added_by?: string | null;
+  created_at?: string;
+}
+
+export interface CreateEntityAliasPayload {
+  entity_id: string;
+  alias_name: string;
+  source_type?: string;
+  added_by?: string;
+}
+
+export type CandidateStatus = 'pending' | 'accepted' | 'rejected';
 
 export interface EntityMatchCandidate {
-  id: string
-  case_id?: string
-  entity_a_id: string
-  entity_b_id: string
-  match_score?: number
-  similarity_score?: number
-  match_reasons?: string[]
-  matching_attributes?: Record<string, any>
-  differing_attributes?: Record<string, any>
-  status: MatchReviewStatus
-  reviewer_notes?: string
-  reviewed_at?: string
-  created_at: string
-  entity_a?: Entity
-  entity_b?: Entity
+  id: string;
+  entity_id_1: string;
+  entity_id_2: string;
+  similarity_score: number;
+  explanation?: Record<string, any> | null;
+  status: CandidateStatus;
+  reviewed_by?: string | null;
+  reviewed_at?: string | null;
+  review_notes?: string | null;
+  created_at?: string;
+}
+
+export interface CreateMatchCandidatePayload {
+  entity_id_1: string;
+  entity_id_2: string;
+  similarity_score: number;
+  explanation?: Record<string, any>;
+}
+
+export interface ReviewCandidatePayload {
+  status: 'accepted' | 'rejected';
+  review_notes?: string;
+  reviewed_by?: string;
+}
+
+// 05 Network Explorer
+export interface Relationship {
+  id: string;
+  entity_id_1: string;
+  entity_id_2: string;
+  relationship_type: string;
+  status: string;
+  confidence?: number | null;
+  created_at?: string;
+}
+
+export interface CreateRelationshipPayload {
+  entity_id_1: string;
+  entity_id_2: string;
+  relationship_type: string;
+}
+
+export interface Evidence {
+  id: string;
+  relationship_id: string;
+  document_id?: string | null;
+  call_record_id?: string | null;
+  transaction_id?: string | null;
+  explanation?: string | null;
+  created_at?: string;
+}
+
+export interface CreateEvidencePayload {
+  document_id?: string;
+  call_record_id?: string;
+  transaction_id?: string;
+  explanation?: string;
 }
 
 export interface GraphNode {
-  id: string
-  label: string
-  type: EntityType
-  entity_type?: EntityType
-  attributes?: Record<string, any>
-  case_id?: string
-  is_verified?: boolean
+  id: string;
+  label: string;
+  type: EntityType;
+  attributes?: Record<string, any>;
+  verification_status?: string;
 }
 
 export interface GraphEdge {
-  id: string
-  source: string
-  target: string
-  type?: string
-  relationship_type?: string
-  label?: string
-  weight?: number
-  confidence?: number
-  evidence_count?: number
+  id: string;
+  source: string;
+  target: string;
+  label: string;
+  status: string;
+  confidence?: number | null;
 }
 
-export interface GraphData {
-  nodes: GraphNode[]
-  edges: GraphEdge[]
+export interface GraphCaseResponse {
+  success: boolean;
+  caseId: string;
+  nodeCount: number;
+  edgeCount: number;
+  data: {
+    nodes: GraphNode[];
+    edges: GraphEdge[];
+  };
 }
 
-export interface GraphAnalysis {
-  node_count?: number
-  edge_count?: number
-  density?: number
-  connected_components?: number
-  avg_degree?: number
-  top_nodes_by_degree?: Array<{ entity_id: string; label: string; degree: number }>
-  top_nodes_by_betweenness?: Array<{ entity_id: string; label: string; score: number }>
-  communities?: Array<{ community_id: number; member_count: number; members: string[] }>
-  isolated_nodes_count?: number
+export interface GraphAnalyzeData {
+  success: boolean;
+  node_count: number;
+  edge_count: number;
+  connections: Record<string, number>;
+  connected_groups: string[][];
+  connected_group_count: number;
 }
 
-export interface ShortestPathResult {
-  found: boolean
-  path_length?: number
-  total_weight?: number
-  nodes: GraphNode[]
-  edges: GraphEdge[]
-  sequence?: string[]
+export interface ShortestPathData {
+  success: boolean;
+  path: string[];
+  distance: number | null;
+  message?: string;
 }
 
-export type AlertSeverity = 'low' | 'medium' | 'high' | 'critical'
-export type AlertStatus = 'new' | 'investigating' | 'resolved' | 'dismissed'
+// 06 Alerts & Analytics
+export type AlertSeverity = 'low' | 'medium' | 'high' | 'critical';
+export type AlertStatus = 'new' | 'reviewing' | 'dismissed' | 'resolved';
 
 export interface Alert {
-  id: string
-  case_id: string
-  title: string
-  description?: string
-  explanation?: string
-  severity: AlertSeverity
-  status: AlertStatus
-  alert_type?: string
-  related_entity_ids?: string[]
-  related_entities?: Entity[]
-  supporting_records?: Record<string, any>[]
-  created_at: string
-  updated_at?: string
+  id: string;
+  case_id?: string | null;
+  alert_type: string;
+  title: string;
+  description: string;
+  reason?: Record<string, any> | null;
+  severity: AlertSeverity;
+  status: AlertStatus;
+  reviewed_by?: string | null;
+  reviewed_at?: string | null;
+  created_at?: string;
 }
 
-export interface CallRecord {
-  id: string
-  case_id: string
-  caller_number: string
-  receiver_number: string
-  call_timestamp: string
-  duration_seconds: number
-  call_type?: 'inbound' | 'outbound' | 'missed'
-  cell_tower_location?: string
-  caller_entity_id?: string
-  receiver_entity_id?: string
-  caller_entity?: Entity
-  receiver_entity?: Entity
-  created_at?: string
+export interface CreateAlertPayload {
+  alert_type: string;
+  title: string;
+  description: string;
+  severity?: AlertSeverity;
+  case_id?: string;
+  reason?: Record<string, any>;
 }
 
-export interface Transaction {
-  id: string
-  case_id: string
-  sender_account: string
-  receiver_account: string
-  amount: number
-  currency: string
-  transaction_timestamp: string
-  transaction_type?: string
-  status?: string
-  sender_entity_id?: string
-  receiver_entity_id?: string
-  sender_entity?: Entity
-  receiver_entity?: Entity
-  reference_number?: string
-  flagged?: boolean
-  created_at?: string
+export interface UpdateAlertStatusPayload {
+  status: AlertStatus;
+  reviewed_by?: string;
 }
 
+// 07 Audit & Administration
 export interface AuditLog {
-  id: string
-  case_id?: string
-  actor?: string
-  action: string
-  resource_type?: string
-  resource_id?: string
-  details?: Record<string, any>
-  ip_address?: string
-  timestamp: string
-}
-
-export interface Source {
-  id: string
-  case_id?: string
-  name: string
-  type: string
-  description?: string
-  reliability_score?: number
-  created_at: string
-}
-
-export interface ApiHealthResponse {
-  status: string
-  timestamp?: string
-  version?: string
-  database?: string
-  service?: string
+  id: string;
+  user_id?: string | null;
+  action: string;
+  table_name: string;
+  record_id?: string | null;
+  details?: Record<string, any> | null;
+  ip_address?: string | null;
+  created_at?: string;
 }

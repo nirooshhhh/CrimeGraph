@@ -1,568 +1,1063 @@
-import React, { useState, useEffect } from 'react'
-import { useParams, useNavigate, useOutletContext } from 'react-router-dom'
+import React, { useState } from 'react';
+import { useParams, Link, useNavigate } from 'react-router-dom';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
-  FolderOpen,
-  ArrowLeft,
+  Briefcase,
   Users,
+  Share2,
   FileText,
-  GitBranch,
-  ShieldAlert,
-  PhoneCall,
-  ArrowLeftRight,
-  ScrollText,
-  Network,
-  Download,
-  Calendar,
-  Shield,
   Layers,
-  ChevronRight,
-} from 'lucide-react'
-import { Card } from '../components/ui/Card'
-import { Button } from '../components/ui/Button'
-import { Badge } from '../components/ui/Badge'
-import { EmptyState } from '../components/ui/EmptyState'
-import { LoadingState } from '../components/ui/LoadingState'
-import { casesService } from '../services/casesService'
-import { entitiesService } from '../services/entitiesService'
-import { documentsService } from '../services/documentsService'
-import { alertsService } from '../services/alertsService'
-import { callRecordsService } from '../services/callRecordsService'
-import { transactionsService } from '../services/transactionsService'
-import { auditLogsService } from '../services/auditLogsService'
-import { graphService } from '../services/graphService'
+  BellRing,
+  Network,
+  Plus,
+  ArrowLeft,
+  Calendar,
+  User,
+  ExternalLink,
+  ShieldAlert,
+  Upload,
+  Download,
+  AlertTriangle,
+} from 'lucide-react';
 import {
-  DEMO_CASES,
-  DEMO_ENTITIES,
-  DEMO_DOCUMENTS,
-  DEMO_RELATIONSHIPS,
-  DEMO_ALERTS,
-  DEMO_CALL_RECORDS,
-  DEMO_TRANSACTIONS,
-  DEMO_AUDIT_LOGS,
-} from '../data/demoData'
-import {
+  fetchCaseById,
+  fetchGraphByCase,
+  fetchDocumentsByCase,
+  fetchSourcesByCase,
+  fetchAlertsByCase,
+  linkEntityToCase,
+  uploadDocument,
+  createSource,
+  createAlert,
+  updateAlertStatus,
+  fetchEntities,
+  getDocumentDownloadUrl,
+} from '../api';
+import { Card, CardHeader, CardTitle, CardDescription } from '../components/common/Card';
+import { Button } from '../components/common/Button';
+import { Modal } from '../components/common/Modal';
+import { Input, Select, Textarea } from '../components/common/FormFields';
+import { EntityTypeBadge, StatusBadge, SeverityBadge, VerificationBadge } from '../components/common/Badge';
+import { DataTable, Column } from '../components/common/DataTable';
+import { CardSkeleton, TableSkeleton } from '../components/common/LoadingSkeleton';
+import { ErrorMessage } from '../components/common/ErrorMessage';
+import { useToast } from '../context/ToastContext';
+import { getErrorMessage } from '../api/client';
+import type {
   Case,
-  Entity,
-  DocumentItem,
-  Relationship,
+  GraphNode,
+  Document,
+  Source,
   Alert,
-  CallRecord,
-  Transaction,
-  AuditLog,
-} from '../types'
-import {
-  formatDate,
-  formatRelativeTime,
-  formatCurrency,
-  formatDuration,
-  formatBytes,
-  ENTITY_COLORS,
-  SEVERITY_BADGES,
-  STATUS_BADGES,
-} from '../lib/utils'
-
-type TabType =
-  | 'overview'
-  | 'entities'
-  | 'documents'
-  | 'relationships'
-  | 'alerts'
-  | 'call-records'
-  | 'transactions'
-  | 'activity'
+  AlertSeverity,
+  AlertStatus,
+  CreateSourcePayload,
+  CreateAlertPayload,
+} from '../types';
 
 export const InvestigationDetailPage: React.FC = () => {
-  const { id } = useParams<{ id: string }>()
-  const navigate = useNavigate()
-  const { isLiveApi } = useOutletContext<{ isLiveApi: boolean }>()
+  const { id = '' } = useParams<{ id: string }>();
+  const navigate = useNavigate();
+  const queryClient = useQueryClient();
+  const { success, error: toastError, info } = useToast();
 
-  const [activeTab, setActiveTab] = useState<TabType>('overview')
-  const [caseData, setCaseData] = useState<Case | null>(null)
-  const [isLoading, setIsLoading] = useState(true)
+  const [activeTab, setActiveTab] = useState<'overview' | 'entities' | 'documents' | 'sources' | 'alerts'>('overview');
 
-  // Associated datasets
-  const [entities, setEntities] = useState<Entity[]>([])
-  const [documents, setDocuments] = useState<DocumentItem[]>([])
-  const [relationships, setRelationships] = useState<Relationship[]>([])
-  const [alerts, setAlerts] = useState<Alert[]>([])
-  const [callRecords, setCallRecords] = useState<CallRecord[]>([])
-  const [transactions, setTransactions] = useState<Transaction[]>([])
-  const [auditLogs, setAuditLogs] = useState<AuditLog[]>([])
+  // Modals state
+  const [isLinkEntityOpen, setIsLinkEntityOpen] = useState(false);
+  const [selectedEntityIdToLink, setSelectedEntityIdToLink] = useState('');
 
-  useEffect(() => {
-    async function loadCaseDossier() {
-      setIsLoading(true)
-      try {
-        if (isLiveApi && id) {
-          const res = await casesService.getCaseById(id)
-          setCaseData(res)
+  const [isUploadDocOpen, setIsUploadDocOpen] = useState(false);
+  const [uploadFile, setUploadFile] = useState<File | null>(null);
+  const [pasteText, setPasteText] = useState('');
+  const [pasteFileName, setPasteFileName] = useState('');
+  const [docUploadMode, setDocUploadMode] = useState<'file' | 'text'>('file');
 
-          // Load case specific tabs data
-          const [eRes, dRes, aRes] = await Promise.allSettled([
-            entitiesService.getEntities(),
-            documentsService.getDocumentsByCase(id),
-            alertsService.getAlertsByCase(id),
-          ])
+  const [isCreateSourceOpen, setIsCreateSourceOpen] = useState(false);
+  const [sourceForm, setSourceForm] = useState<CreateSourcePayload>({
+    source_type: '',
+    source_name: '',
+    description: '',
+    reference_code: '',
+  });
 
-          if (eRes.status === 'fulfilled') {
-            setEntities(eRes.value.filter((e) => e.case_id === id || e.case_ids?.includes(id)))
-          }
-          if (dRes.status === 'fulfilled') setDocuments(dRes.value)
-          if (aRes.status === 'fulfilled') setAlerts(aRes.value)
-        } else {
-          // Demo fallback
-          const found = DEMO_CASES.find((c) => c.id === id) || DEMO_CASES[0]
-          setCaseData(found)
-          setEntities(DEMO_ENTITIES.filter((e) => e.case_id === found.id || e.case_ids?.includes(found.id)))
-          setDocuments(DEMO_DOCUMENTS.filter((d) => d.case_id === found.id))
-          setRelationships(DEMO_RELATIONSHIPS.filter((r) => r.case_id === found.id))
-          setAlerts(DEMO_ALERTS.filter((a) => a.case_id === found.id))
-          setCallRecords(DEMO_CALL_RECORDS.filter((c) => c.case_id === found.id))
-          setTransactions(DEMO_TRANSACTIONS.filter((t) => t.case_id === found.id))
-          setAuditLogs(DEMO_AUDIT_LOGS.filter((a) => a.case_id === found.id))
-        }
-      } catch (err) {
-        console.warn('Error loading case dossier', err)
-        const found = DEMO_CASES.find((c) => c.id === id) || DEMO_CASES[0]
-        setCaseData(found)
-      } finally {
-        setIsLoading(false)
+  const [isCreateAlertOpen, setIsCreateAlertOpen] = useState(false);
+  const [alertForm, setAlertForm] = useState<CreateAlertPayload>({
+    alert_type: '',
+    title: '',
+    description: '',
+    severity: 'medium',
+  });
+
+  // Queries
+  const {
+    data: caseData,
+    isLoading: caseLoading,
+    error: caseError,
+    refetch: refetchCase,
+  } = useQuery({
+    queryKey: ['cases', id],
+    queryFn: () => fetchCaseById(id),
+    enabled: !!id,
+    retry: 1,
+  });
+
+  const { data: graphData, isLoading: graphLoading } = useQuery({
+    queryKey: ['graph', 'case', id],
+    queryFn: () => fetchGraphByCase(id),
+    enabled: !!id,
+  });
+
+  const { data: documents = [], isLoading: docsLoading } = useQuery({
+    queryKey: ['documents', 'case', id],
+    queryFn: () => fetchDocumentsByCase(id),
+    enabled: !!id,
+  });
+
+  const { data: sources = [], isLoading: sourcesLoading } = useQuery({
+    queryKey: ['sources', 'case', id],
+    queryFn: () => fetchSourcesByCase(id),
+    enabled: !!id,
+  });
+
+  const { data: alerts = [], isLoading: alertsLoading } = useQuery({
+    queryKey: ['alerts', 'case', id],
+    queryFn: () => fetchAlertsByCase(id),
+    enabled: !!id,
+  });
+
+  // Fetch all entities for linker
+  const { data: allEntities = [] } = useQuery({
+    queryKey: ['entities'],
+    queryFn: fetchEntities,
+  });
+
+  // Mutations
+  const linkEntityMutation = useMutation({
+    mutationFn: (entityId: string) => linkEntityToCase(id, entityId),
+    onSuccess: (res) => {
+      queryClient.invalidateQueries({ queryKey: ['graph', 'case', id] });
+      queryClient.invalidateQueries({ queryKey: ['dashboard-stats'] });
+      if (res.alreadyLinked) {
+        info('This entity is already linked to this investigation.');
+      } else {
+        success('Entity linked to investigation successfully');
       }
+      setIsLinkEntityOpen(false);
+      setSelectedEntityIdToLink('');
+    },
+    onError: (err) => {
+      toastError(getErrorMessage(err), 'Failed to link entity');
+    },
+  });
+
+  const uploadDocMutation = useMutation({
+    mutationFn: (fd: FormData) => uploadDocument(fd),
+    onSuccess: (res) => {
+      queryClient.invalidateQueries({ queryKey: ['documents', 'case', id] });
+      queryClient.invalidateQueries({ queryKey: ['graph', 'case', id] });
+      queryClient.invalidateQueries({ queryKey: ['entities'] });
+      queryClient.invalidateQueries({ queryKey: ['dashboard-stats'] });
+      success(`Document "${res.data.file_name}" uploaded and processed successfully`);
+      if (res.extraction?.entityExtractionError) {
+        toastError(res.extraction.entityExtractionError, 'Extraction warning');
+      }
+      setIsUploadDocOpen(false);
+      setUploadFile(null);
+      setPasteText('');
+      setPasteFileName('');
+    },
+    onError: (err) => {
+      toastError(getErrorMessage(err), 'Upload failed');
+    },
+  });
+
+  const createSourceMutation = useMutation({
+    mutationFn: (payload: CreateSourcePayload) =>
+      createSource({ ...payload, case_id: id }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['sources', 'case', id] });
+      success('Source attached to investigation');
+      setIsCreateSourceOpen(false);
+      setSourceForm({ source_type: '', source_name: '', description: '', reference_code: '' });
+    },
+    onError: (err) => {
+      toastError(getErrorMessage(err), 'Failed to create source');
+    },
+  });
+
+  const createAlertMutation = useMutation({
+    mutationFn: (payload: CreateAlertPayload) =>
+      createAlert({ ...payload, case_id: id }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['alerts', 'case', id] });
+      queryClient.invalidateQueries({ queryKey: ['dashboard-stats'] });
+      success('Alert flagged for this investigation');
+      setIsCreateAlertOpen(false);
+      setAlertForm({ alert_type: '', title: '', description: '', severity: 'medium' });
+    },
+    onError: (err) => {
+      toastError(getErrorMessage(err), 'Failed to create alert');
+    },
+  });
+
+  const updateAlertMutation = useMutation({
+    mutationFn: ({ alertId, status }: { alertId: string; status: AlertStatus }) =>
+      updateAlertStatus(alertId, { status }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['alerts', 'case', id] });
+      success('Alert status updated');
+    },
+    onError: (err) => {
+      toastError(getErrorMessage(err), 'Status update failed');
+    },
+  });
+
+  // Upload handler
+  const handleDocUploadSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    const fd = new FormData();
+    fd.append('case_id', id);
+
+    if (docUploadMode === 'file') {
+      if (!uploadFile) {
+        toastError('Please select a file to upload');
+        return;
+      }
+      if (uploadFile.size > 10 * 1024 * 1024) {
+        toastError('File size exceeds 10 MB limit');
+        return;
+      }
+      fd.append('file', uploadFile);
+    } else {
+      if (!pasteText.trim()) {
+        toastError('Please enter text to process');
+        return;
+      }
+      const fileName = pasteFileName.trim()
+        ? (pasteFileName.endsWith('.txt') ? pasteFileName : `${pasteFileName}.txt`)
+        : 'pasted-notes.txt';
+      const file = new File([pasteText], fileName, { type: 'text/plain' });
+      fd.append('file', file);
     }
 
-    loadCaseDossier()
-  }, [id, isLiveApi])
+    uploadDocMutation.mutate(fd);
+  };
 
-  if (isLoading) {
-    return <LoadingState message="Decryption & Ingestion of Case Dossier..." />
-  }
-
-  if (!caseData) {
+  // 404 / Missing error state
+  if (caseError) {
     return (
-      <EmptyState
-        title="Dossier Not Found"
-        description="The requested investigation file does not exist or has been archived."
-        actionLabel="Back to Investigations"
-        onAction={() => navigate('/investigations')}
-      />
-    )
-  }
-
-  const tabs = [
-    { id: 'overview', label: 'Overview', icon: FolderOpen },
-    { id: 'entities', label: `Entities (${entities.length})`, icon: Users },
-    { id: 'documents', label: `Documents (${documents.length})`, icon: FileText },
-    { id: 'relationships', label: `Relationships (${relationships.length})`, icon: GitBranch },
-    { id: 'alerts', label: `Alerts (${alerts.length})`, icon: ShieldAlert },
-    { id: 'call-records', label: `Call Records (${callRecords.length})`, icon: PhoneCall },
-    { id: 'transactions', label: `Transactions (${transactions.length})`, icon: ArrowLeftRight },
-    { id: 'activity', label: 'Activity Trail', icon: ScrollText },
-  ]
-
-  return (
-    <div className="space-y-6 animate-fade-in">
-      {/* Top Breadcrumb & Action bar */}
-      <div className="flex items-center justify-between pb-3 border-b border-border-subtle">
-        <button
-          onClick={() => navigate('/investigations')}
-          className="flex items-center gap-2 text-xs font-mono text-text-muted hover:text-amber-forensic transition-colors"
-        >
-          <ArrowLeft className="w-3.5 h-3.5" />
-          <span>RETURN TO INVESTIGATIONS</span>
-        </button>
-
-        <div className="flex items-center gap-2">
-          <Button
-            size="sm"
-            variant="primary"
-            onClick={() => navigate(`/link-analysis?case=${caseData.id}`)}
-            icon={<Network className="w-3.5 h-3.5" />}
-            className="text-xs font-mono"
-          >
-            Launch Graph Visualizer
+      <div className="space-y-6">
+        <Link to="/cases" className="text-xs text-text-secondary hover:text-text-primary flex items-center gap-1.5">
+          <ArrowLeft className="w-4 h-4" /> Back to Investigations
+        </Link>
+        <div className="bg-surface border border-status-error/30 rounded-card p-12 text-center max-w-lg mx-auto">
+          <AlertTriangle className="w-12 h-12 text-status-error mx-auto mb-4" />
+          <h2 className="text-xl font-bold text-text-primary mb-2">Investigation Not Found</h2>
+          <p className="text-sm text-text-secondary mb-6 leading-relaxed">
+            The requested investigation case ID <code className="font-mono text-accent">{id}</code> does not exist or
+            has been removed.
+          </p>
+          <Button onClick={() => navigate('/cases')} icon={<Briefcase className="w-4 h-4" />}>
+            Return to Investigations List
           </Button>
         </div>
       </div>
+    );
+  }
+
+  if (caseLoading) {
+    return (
+      <div className="space-y-6">
+        <div className="h-28 bg-surface border border-border rounded-card animate-pulse" />
+        <CardSkeleton count={4} />
+      </div>
+    );
+  }
+
+  const nodes = graphData?.data?.nodes || [];
+  const edges = graphData?.data?.edges || [];
+
+  return (
+    <div className="space-y-6">
+      {/* Back link */}
+      <div>
+        <Link
+          to="/cases"
+          className="inline-flex items-center gap-1.5 text-xs text-text-secondary hover:text-text-primary transition-colors"
+        >
+          <ArrowLeft className="w-4 h-4" /> Back to Investigations
+        </Link>
+      </div>
 
       {/* Case Header Card */}
-      <Card className="p-6 bg-bg-secondary/90 border-border-subtle space-y-4">
-        <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-4">
+      <Card className="border-border">
+        <div className="flex flex-col md:flex-row md:items-start justify-between gap-4">
           <div className="space-y-2">
-            <div className="flex items-center gap-2 flex-wrap">
-              <span className="font-mono text-sm font-bold text-amber-forensic px-2.5 py-0.5 rounded bg-amber-forensic/10 border border-amber-forensic/30">
-                {caseData.case_number}
+            <div className="flex items-center gap-2.5 flex-wrap">
+              <span className="font-mono text-sm font-bold text-accent px-2 py-0.5 rounded bg-accent/10 border border-accent/20">
+                {caseData?.case_number}
               </span>
-              <span className={`badge ${STATUS_BADGES[caseData.status] || 'badge-gray'}`}>
-                {caseData.status.toUpperCase()}
-              </span>
-              <span className={`badge ${SEVERITY_BADGES[caseData.priority] || 'badge-gray'}`}>
-                PRIORITY: {caseData.priority.toUpperCase()}
-              </span>
-              <span className="text-xs font-mono text-text-muted px-2 py-0.5 rounded bg-bg-elevated border border-border-subtle">
-                {caseData.category.replace(/_/g, ' ').toUpperCase()}
+              <StatusBadge status={caseData?.status} />
+              <span className="text-xs uppercase px-2 py-0.5 rounded bg-surface-raised border border-border text-text-secondary font-medium">
+                {caseData?.priority || 'standard'} Priority
               </span>
             </div>
 
-            <h1 className="text-xl font-bold text-text-primary tracking-tight">
-              {caseData.title}
-            </h1>
-            <p className="text-xs text-text-secondary leading-relaxed max-w-3xl">
-              {caseData.description || 'No operational brief attached to this file.'}
-            </p>
+            <h2 className="text-2xl font-bold text-text-primary tracking-tight">{caseData?.title}</h2>
+
+            {caseData?.description && (
+              <p className="text-sm text-text-secondary max-w-3xl leading-relaxed">{caseData.description}</p>
+            )}
+
+            <div className="flex items-center gap-6 pt-2 text-xs text-text-muted flex-wrap">
+              <span className="flex items-center gap-1.5">
+                <User className="w-3.5 h-3.5 text-text-muted" />
+                Lead: <strong className="text-text-secondary font-medium">{caseData?.created_by || 'Unassigned'}</strong>
+              </span>
+              <span className="flex items-center gap-1.5">
+                <Calendar className="w-3.5 h-3.5 text-text-muted" />
+                Opened: <span className="text-text-secondary tabular-nums">
+                  {caseData?.created_at ? new Date(caseData.created_at).toLocaleDateString() : '—'}
+                </span>
+              </span>
+            </div>
           </div>
 
-          <div className="flex flex-col gap-1.5 p-3.5 rounded-lg bg-bg-elevated/50 border border-border-subtle text-xs font-mono min-w-[240px]">
-            <div className="flex items-center justify-between text-text-muted">
-              <span>Lead Agent:</span>
-              <span className="text-text-primary font-medium">{caseData.lead_investigator || 'Unit ISE'}</span>
-            </div>
-            <div className="flex items-center justify-between text-text-muted">
-              <span>Opened:</span>
-              <span className="text-text-primary">{formatDate(caseData.created_at)}</span>
-            </div>
-            <div className="flex items-center justify-between text-text-muted">
-              <span>Last Modified:</span>
-              <span className="text-text-primary">{formatRelativeTime(caseData.updated_at)}</span>
-            </div>
+          <div className="shrink-0 flex items-center gap-3">
+            <Button
+              onClick={() => navigate(`/cases/${id}/graph`)}
+              icon={<Network className="w-4 h-4" />}
+            >
+              Link Analysis Graph
+            </Button>
           </div>
         </div>
 
-        {/* 8 Tabs Header */}
-        <div className="flex items-center gap-1 overflow-x-auto border-t border-border-subtle pt-3 scrollbar-thin">
-          {tabs.map((tab) => {
-            const Icon = tab.icon
-            const isActive = activeTab === tab.id
-            return (
-              <button
-                key={tab.id}
-                onClick={() => setActiveTab(tab.id as TabType)}
-                className={`flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs font-medium transition-all whitespace-nowrap cursor-pointer ${
-                  isActive
-                    ? 'bg-amber-forensic text-bg-primary font-semibold shadow-sm'
-                    : 'text-text-secondary hover:text-text-primary hover:bg-bg-elevated'
-                }`}
-              >
-                <Icon className="w-3.5 h-3.5 flex-shrink-0" />
-                <span>{tab.label}</span>
-              </button>
-            )
-          })}
+        {/* Tab Navigation */}
+        <div className="flex items-center gap-2 mt-6 border-t border-border pt-4 overflow-x-auto">
+          <button
+            onClick={() => setActiveTab('overview')}
+            className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
+              activeTab === 'overview'
+                ? 'bg-accent/15 text-accent font-semibold border border-accent/25'
+                : 'text-text-secondary hover:text-text-primary hover:bg-surface-raised'
+            }`}
+          >
+            Overview
+          </button>
+          <button
+            onClick={() => setActiveTab('entities')}
+            className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors flex items-center gap-1.5 ${
+              activeTab === 'entities'
+                ? 'bg-accent/15 text-accent font-semibold border border-accent/25'
+                : 'text-text-secondary hover:text-text-primary hover:bg-surface-raised'
+            }`}
+          >
+            Entities
+            <span className="px-1.5 py-0.2 rounded bg-surface-raised text-xs font-mono tabular-nums text-text-secondary">
+              {nodes.length}
+            </span>
+          </button>
+          <button
+            onClick={() => setActiveTab('documents')}
+            className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors flex items-center gap-1.5 ${
+              activeTab === 'documents'
+                ? 'bg-accent/15 text-accent font-semibold border border-accent/25'
+                : 'text-text-secondary hover:text-text-primary hover:bg-surface-raised'
+            }`}
+          >
+            Documents
+            <span className="px-1.5 py-0.2 rounded bg-surface-raised text-xs font-mono tabular-nums text-text-secondary">
+              {documents.length}
+            </span>
+          </button>
+          <button
+            onClick={() => setActiveTab('sources')}
+            className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors flex items-center gap-1.5 ${
+              activeTab === 'sources'
+                ? 'bg-accent/15 text-accent font-semibold border border-accent/25'
+                : 'text-text-secondary hover:text-text-primary hover:bg-surface-raised'
+            }`}
+          >
+            Sources
+            <span className="px-1.5 py-0.2 rounded bg-surface-raised text-xs font-mono tabular-nums text-text-secondary">
+              {sources.length}
+            </span>
+          </button>
+          <button
+            onClick={() => setActiveTab('alerts')}
+            className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors flex items-center gap-1.5 ${
+              activeTab === 'alerts'
+                ? 'bg-accent/15 text-accent font-semibold border border-accent/25'
+                : 'text-text-secondary hover:text-text-primary hover:bg-surface-raised'
+            }`}
+          >
+            Alerts
+            <span className="px-1.5 py-0.2 rounded bg-surface-raised text-xs font-mono tabular-nums text-text-secondary">
+              {alerts.length}
+            </span>
+          </button>
         </div>
       </Card>
 
-      {/* Tab Content Panels */}
+      {/* Tab Content */}
       {activeTab === 'overview' && (
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
-          <Card className="p-5 md:col-span-2 bg-bg-secondary/80 border-border-subtle space-y-4">
-            <h3 className="text-sm font-semibold text-text-primary">Investigative Synopsis</h3>
-            <p className="text-xs text-text-secondary leading-relaxed">
-              This case correlates data across multiple evidence records including maritime manifests,
-              wire records, burner telephony, and surveillance sightings. The goal is to illuminate
-              the structure of the syndicate, uncover cross-case links, and evaluate risk vectors.
-            </p>
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-3 border-t border-border-subtle text-center">
-              <div className="p-3 rounded-lg bg-bg-elevated/40 border border-border-subtle">
-                <span className="text-lg font-mono font-bold text-amber-forensic">
-                  {entities.length}
-                </span>
-                <p className="text-[10px] text-text-muted font-mono uppercase">Key Entities</p>
-              </div>
-              <div className="p-3 rounded-lg bg-bg-elevated/40 border border-border-subtle">
-                <span className="text-lg font-mono font-bold text-teal-forensic">
-                  {relationships.length}
-                </span>
-                <p className="text-[10px] text-text-muted font-mono uppercase">Links</p>
-              </div>
-              <div className="p-3 rounded-lg bg-bg-elevated/40 border border-border-subtle">
-                <span className="text-lg font-mono font-bold text-purple-400">
-                  {documents.length}
-                </span>
-                <p className="text-[10px] text-text-muted font-mono uppercase">Evidence Files</p>
-              </div>
-              <div className="p-3 rounded-lg bg-bg-elevated/40 border border-border-subtle">
-                <span className="text-lg font-mono font-bold text-rose-400">
-                  {alerts.length}
-                </span>
-                <p className="text-[10px] text-text-muted font-mono uppercase">Alert Signals</p>
-              </div>
-            </div>
-          </Card>
+        <div className="space-y-6">
+          {/* Quick Stats Grid */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+            <Card className="flex flex-col justify-between">
+              <div className="text-xs font-semibold uppercase text-text-muted">Linked Entities</div>
+              <div className="text-2xl font-bold text-text-primary tabular-nums mt-1">{nodes.length}</div>
+              <div className="text-[11px] text-text-muted mt-1">From network graph</div>
+            </Card>
 
-          <Card className="p-5 bg-bg-secondary/80 border-border-subtle space-y-3">
-            <h3 className="text-sm font-semibold text-text-primary">Key Targets</h3>
-            <div className="space-y-2">
-              {entities.slice(0, 4).map((e) => (
-                <div
-                  key={e.id}
-                  onClick={() => navigate(`/entities/${e.id}`)}
-                  className="p-2 rounded bg-bg-elevated/40 hover:bg-bg-elevated flex items-center justify-between text-xs cursor-pointer"
-                >
-                  <span className="font-medium text-text-primary truncate max-w-[140px]">
-                    {e.label || e.name}
-                  </span>
-                  <span className="font-mono text-[10px] text-amber-forensic uppercase">
-                    {e.entity_type}
-                  </span>
+            <Card className="flex flex-col justify-between">
+              <div className="text-xs font-semibold uppercase text-text-muted">Internal Links</div>
+              <div className="text-2xl font-bold text-text-primary tabular-nums mt-1">{edges.length}</div>
+              <div className="text-[11px] text-text-muted mt-1">Inter-entity edges</div>
+            </Card>
+
+            <Card className="flex flex-col justify-between">
+              <div className="text-xs font-semibold uppercase text-text-muted">Evidence Files</div>
+              <div className="text-2xl font-bold text-text-primary tabular-nums mt-1">{documents.length}</div>
+              <div className="text-[11px] text-text-muted mt-1">Processed documents</div>
+            </Card>
+
+            <Card className="flex flex-col justify-between">
+              <div className="text-xs font-semibold uppercase text-text-muted">Intelligence Sources</div>
+              <div className="text-2xl font-bold text-text-primary tabular-nums mt-1">{sources.length}</div>
+              <div className="text-[11px] text-text-muted mt-1">Connected data origins</div>
+            </Card>
+
+            <Card className="flex flex-col justify-between">
+              <div className="text-xs font-semibold uppercase text-text-muted">Active Alerts</div>
+              <div className="text-2xl font-bold text-text-primary tabular-nums mt-1">{alerts.length}</div>
+              <div className="text-[11px] text-text-muted mt-1">Flagged triggers</div>
+            </Card>
+          </div>
+
+          {/* Quick Actions Panel */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <Card className="hover:border-accent/40 transition-colors flex flex-col justify-between">
+              <div>
+                <div className="w-9 h-9 rounded-lg bg-[#818CF8]/15 border border-[#818CF8]/30 flex items-center justify-center text-[#818CF8] mb-3">
+                  <Users className="w-5 h-5" />
                 </div>
-              ))}
-            </div>
-          </Card>
+                <h4 className="text-sm font-semibold text-text-primary">Link Suspects & Persons</h4>
+                <p className="text-xs text-text-secondary mt-1 leading-relaxed">
+                  Associate existing entities in the repository directly to this case file.
+                </p>
+              </div>
+              <div className="pt-4">
+                <Button size="sm" variant="secondary" onClick={() => setIsLinkEntityOpen(true)} icon={<Plus className="w-3.5 h-3.5" />}>
+                  Link Entity
+                </Button>
+              </div>
+            </Card>
+
+            <Card className="hover:border-accent/40 transition-colors flex flex-col justify-between">
+              <div>
+                <div className="w-9 h-9 rounded-lg bg-[#FBBF24]/15 border border-[#FBBF24]/30 flex items-center justify-center text-[#FBBF24] mb-3">
+                  <FileText className="w-5 h-5" />
+                </div>
+                <h4 className="text-sm font-semibold text-text-primary">Upload Evidence File</h4>
+                <p className="text-xs text-text-secondary mt-1 leading-relaxed">
+                  Extract entities and mentions from intelligence reports, statements, or transcripts (.pdf/.txt).
+                </p>
+              </div>
+              <div className="pt-4">
+                <Button size="sm" variant="secondary" onClick={() => setIsUploadDocOpen(true)} icon={<Upload className="w-3.5 h-3.5" />}>
+                  Upload File
+                </Button>
+              </div>
+            </Card>
+
+            <Card className="hover:border-accent/40 transition-colors flex flex-col justify-between">
+              <div>
+                <div className="w-9 h-9 rounded-lg bg-accent/15 border border-accent/30 flex items-center justify-center text-accent mb-3">
+                  <Network className="w-5 h-5" />
+                </div>
+                <h4 className="text-sm font-semibold text-text-primary">Interactive Graph Analysis</h4>
+                <p className="text-xs text-text-secondary mt-1 leading-relaxed">
+                  Visualize connections, compute shortest paths, and detect isolated or key hub entities.
+                </p>
+              </div>
+              <div className="pt-4">
+                <Button size="sm" onClick={() => navigate(`/cases/${id}/graph`)} icon={<ExternalLink className="w-3.5 h-3.5" />}>
+                  Explore Network
+                </Button>
+              </div>
+            </Card>
+          </div>
         </div>
       )}
 
+      {/* Entities Tab */}
       {activeTab === 'entities' && (
-        <Card className="p-5 bg-bg-secondary/80 border-border-subtle space-y-4">
+        <div className="space-y-4">
           <div className="flex items-center justify-between">
-            <h3 className="text-sm font-semibold text-text-primary">Associated Entities ({entities.length})</h3>
-            <Button
-              size="sm"
-              variant="secondary"
-              onClick={() => navigate('/entities')}
-              className="text-xs"
-            >
-              Add Entity
+            <div>
+              <h3 className="text-base font-semibold text-text-primary">Entities Linked to Investigation</h3>
+              <p className="text-xs text-text-secondary mt-0.5">
+                Persons, phone numbers, vehicles, and organizations connected to this case.
+              </p>
+            </div>
+            <Button size="sm" onClick={() => setIsLinkEntityOpen(true)} icon={<Plus className="w-3.5 h-3.5" />}>
+              Link Existing Entity
             </Button>
           </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-            {entities.map((e) => (
-              <div
-                key={e.id}
-                onClick={() => navigate(`/entities/${e.id}`)}
-                className="p-3.5 rounded-lg bg-bg-elevated/40 hover:bg-bg-elevated border border-border-subtle hover:border-amber-forensic/30 cursor-pointer transition-all space-y-2"
-              >
-                <div className="flex items-center justify-between">
-                  <span className="font-semibold text-xs text-text-primary truncate">
-                    {e.label || e.name}
-                  </span>
-                  <span
-                    className={`text-[9px] font-mono px-1.5 py-0.5 rounded border uppercase ${
-                      ENTITY_COLORS[e.entity_type]?.bg
-                    } ${ENTITY_COLORS[e.entity_type]?.text} ${
-                      ENTITY_COLORS[e.entity_type]?.border
-                    }`}
+
+          <DataTable
+            data={nodes}
+            columns={[
+              {
+                key: 'label',
+                header: 'Entity Name / Value',
+                render: (node) => (
+                  <Link
+                    to={`/entities/${node.id}`}
+                    className="font-medium text-text-primary hover:text-accent transition-colors flex items-center gap-2"
                   >
-                    {e.entity_type}
-                  </span>
-                </div>
-                <p className="text-[11px] text-text-muted font-mono truncate">
-                  {e.identifier || e.normalized_value || 'No identifier registered'}
-                </p>
-              </div>
-            ))}
-          </div>
-        </Card>
+                    <span>{node.label}</span>
+                    <ExternalLink className="w-3 h-3 text-text-muted" />
+                  </Link>
+                ),
+              },
+              {
+                key: 'type',
+                header: 'Type',
+                render: (node) => <EntityTypeBadge type={node.type} />,
+              },
+              {
+                key: 'verification_status',
+                header: 'Verification Status',
+                render: (node) => <VerificationBadge status={node.verification_status} />,
+              },
+              {
+                key: 'id',
+                header: 'Entity ID',
+                render: (node) => <span className="font-mono text-xs text-text-muted">{node.id}</span>,
+              },
+            ]}
+            searchPlaceholder="Filter linked entities by name or type..."
+            emptyTitle="No entities linked yet"
+            emptyDescription="Link existing suspects or upload a document to auto-extract entity mentions."
+            emptyAction={
+              <Button size="sm" onClick={() => setIsLinkEntityOpen(true)} icon={<Plus className="w-3.5 h-3.5" />}>
+                Link Entity
+              </Button>
+            }
+          />
+        </div>
       )}
 
+      {/* Documents Tab */}
       {activeTab === 'documents' && (
-        <Card className="p-5 bg-bg-secondary/80 border-border-subtle space-y-4">
+        <div className="space-y-4">
           <div className="flex items-center justify-between">
-            <h3 className="text-sm font-semibold text-text-primary">
-              Evidentiary Documents & Transcripts ({documents.length})
-            </h3>
-            <Button
-              size="sm"
-              variant="secondary"
-              onClick={() => navigate('/documents')}
-              className="text-xs"
-            >
+            <div>
+              <h3 className="text-base font-semibold text-text-primary">Case Evidence Documents</h3>
+              <p className="text-xs text-text-secondary mt-0.5">
+                Uploaded case files, transcripts, and intelligence reports.
+              </p>
+            </div>
+            <Button size="sm" onClick={() => setIsUploadDocOpen(true)} icon={<Upload className="w-3.5 h-3.5" />}>
               Upload Document
             </Button>
           </div>
-          <div className="space-y-2.5">
-            {documents.map((d) => (
-              <div
-                key={d.id}
-                className="p-3 rounded-lg bg-bg-elevated/40 border border-border-subtle flex items-center justify-between"
-              >
-                <div className="flex items-center gap-3">
-                  <FileText className="w-4 h-4 text-amber-forensic flex-shrink-0" />
-                  <div>
-                    <p className="text-xs font-semibold text-text-primary">{d.title || d.filename}</p>
-                    <p className="text-[10px] text-text-muted font-mono">
-                      {d.filename} • {formatBytes(d.file_size)} • {formatDate(d.created_at)}
-                    </p>
+
+          <DataTable
+            data={documents}
+            columns={[
+              {
+                key: 'file_name',
+                header: 'File Name',
+                render: (doc) => (
+                  <Link
+                    to={`/documents/${doc.id}`}
+                    className="font-medium text-accent hover:underline flex items-center gap-1.5"
+                  >
+                    <FileText className="w-4 h-4 text-text-muted" />
+                    {doc.file_name}
+                  </Link>
+                ),
+              },
+              {
+                key: 'file_type',
+                header: 'Type',
+                render: (doc) => (
+                  <span className="text-xs font-mono text-text-muted">{doc.file_type || 'text/plain'}</span>
+                ),
+              },
+              {
+                key: 'processing_status',
+                header: 'Processing Status',
+                render: (doc) => <StatusBadge status={doc.processing_status} />,
+              },
+              {
+                key: 'uploaded_at',
+                header: 'Uploaded Date',
+                render: (doc) => (
+                  <span className="text-xs text-text-muted tabular-nums">
+                    {doc.uploaded_at ? new Date(doc.uploaded_at).toLocaleString() : '—'}
+                  </span>
+                ),
+              },
+              {
+                key: 'actions',
+                header: '',
+                sortable: false,
+                align: 'right',
+                render: (doc) => (
+                  <div className="flex items-center justify-end gap-2">
+                    <Link
+                      to={`/documents/${doc.id}`}
+                      className="text-xs text-text-secondary hover:text-text-primary font-medium"
+                    >
+                      View Mentions
+                    </Link>
+                    <a
+                      href={getDocumentDownloadUrl(doc.id)}
+                      download
+                      className="p-1 rounded text-text-muted hover:text-accent transition-colors"
+                      title="Download file"
+                    >
+                      <Download className="w-3.5 h-3.5" />
+                    </a>
                   </div>
-                </div>
-                <Badge variant="teal">{d.status.toUpperCase()}</Badge>
-              </div>
-            ))}
-          </div>
-        </Card>
+                ),
+              },
+            ]}
+            searchPlaceholder="Search case documents..."
+            emptyTitle="No documents uploaded for this case"
+            emptyDescription="Upload PDF files or paste plain text transcripts to detect entities."
+            emptyAction={
+              <Button size="sm" onClick={() => setIsUploadDocOpen(true)} icon={<Upload className="w-3.5 h-3.5" />}>
+                Upload Document
+              </Button>
+            }
+          />
+        </div>
       )}
 
-      {activeTab === 'relationships' && (
-        <Card className="p-5 bg-bg-secondary/80 border-border-subtle space-y-4">
+      {/* Sources Tab */}
+      {activeTab === 'sources' && (
+        <div className="space-y-4">
           <div className="flex items-center justify-between">
-            <h3 className="text-sm font-semibold text-text-primary">
-              Recorded Entity Relationships ({relationships.length})
-            </h3>
-            <Button
-              size="sm"
-              variant="primary"
-              onClick={() => navigate(`/link-analysis?case=${caseData.id}`)}
-              icon={<Network className="w-3.5 h-3.5" />}
-              className="text-xs"
-            >
-              View in Graph
+            <div>
+              <h3 className="text-base font-semibold text-text-primary">Intelligence Sources</h3>
+              <p className="text-xs text-text-secondary mt-0.5">
+                Originators, intelligence feeds, and evidence custody records.
+              </p>
+            </div>
+            <Button size="sm" onClick={() => setIsCreateSourceOpen(true)} icon={<Plus className="w-3.5 h-3.5" />}>
+              Add Source
             </Button>
           </div>
-          <div className="space-y-2.5">
-            {relationships.map((r) => (
-              <div
-                key={r.id}
-                className="p-3 rounded-lg bg-bg-elevated/40 border border-border-subtle flex items-center justify-between text-xs"
-              >
-                <div className="space-y-1">
-                  <div className="flex items-center gap-2">
-                    <span className="font-mono text-amber-400 font-semibold">
-                      {r.source_entity_id || r.source_id}
-                    </span>
-                    <span className="text-[10px] px-2 py-0.5 rounded bg-bg-secondary text-text-secondary font-mono border border-border-subtle">
-                      {r.relationship_type}
-                    </span>
-                    <span className="font-mono text-teal-400 font-semibold">
-                      {r.target_entity_id || r.target_id}
-                    </span>
-                  </div>
-                  {r.notes && <p className="text-[11px] text-text-muted italic">{r.notes}</p>}
-                </div>
-                <span className="text-[10px] font-mono text-text-muted">
-                  Confidence: {Math.round((r.confidence || 0.9) * 100)}%
-                </span>
-              </div>
-            ))}
-          </div>
-        </Card>
-      )}
 
-      {activeTab === 'alerts' && (
-        <Card className="p-5 bg-bg-secondary/80 border-border-subtle space-y-4">
-          <h3 className="text-sm font-semibold text-text-primary">Case Alerts ({alerts.length})</h3>
-          <div className="space-y-3">
-            {alerts.map((a) => (
-              <div
-                key={a.id}
-                className="p-3.5 rounded-lg bg-bg-elevated/40 border border-border-subtle space-y-1.5"
-              >
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <span className={`badge ${SEVERITY_BADGES[a.severity] || 'badge-gray'}`}>
-                      {a.severity.toUpperCase()}
-                    </span>
-                    <span className="text-xs font-semibold text-text-primary">{a.title}</span>
+          <DataTable
+            data={sources}
+            columns={[
+              {
+                key: 'source_name',
+                header: 'Source Name',
+                render: (s) => (
+                  <div>
+                    <div className="font-medium text-text-primary">{s.source_name}</div>
+                    {s.description && <div className="text-xs text-text-muted truncate">{s.description}</div>}
                   </div>
-                  <span className="text-[10px] text-text-muted font-mono">
-                    {formatRelativeTime(a.created_at)}
+                ),
+              },
+              {
+                key: 'source_type',
+                header: 'Type',
+                render: (s) => (
+                  <span className="text-xs font-medium px-2 py-0.5 rounded bg-surface-raised border border-border text-text-secondary">
+                    {s.source_type}
                   </span>
-                </div>
-                <p className="text-xs text-text-secondary">{a.description}</p>
-                {a.explanation && (
-                  <p className="text-[11px] text-amber-300/80 bg-amber-500/10 p-2 rounded border border-amber-500/20 font-mono">
-                    Analysis: {a.explanation}
-                  </p>
-                )}
-              </div>
-            ))}
-          </div>
-        </Card>
+                ),
+              },
+              {
+                key: 'reference_code',
+                header: 'Ref Code',
+                render: (s) => (
+                  <span className="font-mono text-xs text-text-muted">{s.reference_code || '—'}</span>
+                ),
+              },
+              {
+                key: 'created_at',
+                header: 'Registered Date',
+                render: (s) => (
+                  <span className="text-xs text-text-muted tabular-nums">
+                    {s.created_at ? new Date(s.created_at).toLocaleDateString() : '—'}
+                  </span>
+                ),
+              },
+            ]}
+            emptyTitle="No sources registered for this case"
+            emptyDescription="Attach reference sources such as CDR exports, informant briefs, or surveillance logs."
+            emptyAction={
+              <Button size="sm" onClick={() => setIsCreateSourceOpen(true)} icon={<Plus className="w-3.5 h-3.5" />}>
+                Add Source
+              </Button>
+            }
+          />
+        </div>
       )}
 
-      {activeTab === 'call-records' && (
-        <Card className="p-5 bg-bg-secondary/80 border-border-subtle space-y-4">
-          <h3 className="text-sm font-semibold text-text-primary">Telephony & Call Detail Records ({callRecords.length})</h3>
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs">
-              <thead>
-                <tr className="border-b border-border-subtle text-text-muted uppercase font-mono">
-                  <th className="py-2 px-3">Caller</th>
-                  <th className="py-2 px-3">Receiver</th>
-                  <th className="py-2 px-3">Timestamp</th>
-                  <th className="py-2 px-3">Duration</th>
-                  <th className="py-2 px-3">Cell Mast</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-border-subtle/40">
-                {callRecords.map((c) => (
-                  <tr key={c.id} className="hover:bg-bg-elevated/40">
-                    <td className="py-2.5 px-3 font-mono font-medium text-sky-400">
-                      {c.caller_number}
-                    </td>
-                    <td className="py-2.5 px-3 font-mono font-medium text-amber-400">
-                      {c.receiver_number}
-                    </td>
-                    <td className="py-2.5 px-3 text-text-muted">{formatDate(c.call_timestamp)}</td>
-                    <td className="py-2.5 px-3 font-mono">{formatDuration(c.duration_seconds)}</td>
-                    <td className="py-2.5 px-3 text-text-secondary">{c.cell_tower_location || '—'}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+      {/* Alerts Tab */}
+      {activeTab === 'alerts' && (
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <h3 className="text-base font-semibold text-text-primary">Case Alerts & Triggers</h3>
+              <p className="text-xs text-text-secondary mt-0.5">
+                Critical leads, high-priority notifications, and case alerts.
+              </p>
+            </div>
+            <Button size="sm" onClick={() => setIsCreateAlertOpen(true)} icon={<Plus className="w-3.5 h-3.5" />}>
+              Flag New Alert
+            </Button>
           </div>
-        </Card>
-      )}
 
-      {activeTab === 'transactions' && (
-        <Card className="p-5 bg-bg-secondary/80 border-border-subtle space-y-4">
-          <h3 className="text-sm font-semibold text-text-primary">Financial Ledger & Fund Transfers ({transactions.length})</h3>
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs">
-              <thead>
-                <tr className="border-b border-border-subtle text-text-muted uppercase font-mono">
-                  <th className="py-2 px-3">Sender Account</th>
-                  <th className="py-2 px-3">Beneficiary</th>
-                  <th className="py-2 px-3">Amount</th>
-                  <th className="py-2 px-3">Date</th>
-                  <th className="py-2 px-3">Type</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-border-subtle/40">
-                {transactions.map((t) => (
-                  <tr key={t.id} className="hover:bg-bg-elevated/40">
-                    <td className="py-2.5 px-3 font-mono text-text-primary truncate max-w-[200px]">
-                      {t.sender_account}
-                    </td>
-                    <td className="py-2.5 px-3 font-mono text-text-secondary truncate max-w-[200px]">
-                      {t.receiver_account}
-                    </td>
-                    <td className="py-2.5 px-3 font-mono font-bold text-amber-forensic">
-                      {formatCurrency(t.amount, t.currency)}
-                    </td>
-                    <td className="py-2.5 px-3 text-text-muted">{formatDate(t.transaction_timestamp)}</td>
-                    <td className="py-2.5 px-3 font-mono text-[10px] text-text-muted">
-                      {t.transaction_type}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </Card>
-      )}
-
-      {activeTab === 'activity' && (
-        <Card className="p-5 bg-bg-secondary/80 border-border-subtle space-y-4">
-          <h3 className="text-sm font-semibold text-text-primary">Chain of Custody & Audit Trail ({auditLogs.length})</h3>
-          <div className="space-y-3">
-            {auditLogs.map((log) => (
-              <div
-                key={log.id}
-                className="p-3 rounded-lg bg-bg-elevated/40 border border-border-subtle flex items-start justify-between text-xs font-mono"
-              >
-                <div className="space-y-1">
-                  <div className="flex items-center gap-2">
-                    <span className="text-amber-forensic font-bold">{log.action}</span>
-                    <span className="text-text-muted">by {log.actor || 'System'}</span>
+          <DataTable
+            data={alerts}
+            columns={[
+              {
+                key: 'title',
+                header: 'Alert Title & Summary',
+                render: (a) => (
+                  <div>
+                    <div className="font-medium text-text-primary">{a.title}</div>
+                    <div className="text-xs text-text-muted truncate mt-0.5">{a.description}</div>
                   </div>
-                  <p className="text-text-secondary font-sans">
-                    Resource: {log.resource_type} ({log.resource_id})
-                  </p>
-                </div>
-                <span className="text-[10px] text-text-muted">{formatDate(log.timestamp)}</span>
-              </div>
-            ))}
-          </div>
-        </Card>
+                ),
+              },
+              {
+                key: 'severity',
+                header: 'Severity',
+                render: (a) => <SeverityBadge severity={a.severity} />,
+              },
+              {
+                key: 'status',
+                header: 'Status',
+                render: (a) => <StatusBadge status={a.status} />,
+              },
+              {
+                key: 'created_at',
+                header: 'Flagged Date',
+                render: (a) => (
+                  <span className="text-xs text-text-muted tabular-nums">
+                    {a.created_at ? new Date(a.created_at).toLocaleString() : '—'}
+                  </span>
+                ),
+              },
+              {
+                key: 'quick_action',
+                header: 'Update Status',
+                sortable: false,
+                align: 'right',
+                render: (a) => (
+                  <div className="flex items-center justify-end gap-1.5">
+                    {a.status === 'new' && (
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        onClick={() => updateAlertMutation.mutate({ alertId: a.id, status: 'reviewing' })}
+                      >
+                        Review
+                      </Button>
+                    )}
+                    {a.status !== 'resolved' && (
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        onClick={() => updateAlertMutation.mutate({ alertId: a.id, status: 'resolved' })}
+                      >
+                        Resolve
+                      </Button>
+                    )}
+                    {a.status !== 'dismissed' && (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => updateAlertMutation.mutate({ alertId: a.id, status: 'dismissed' })}
+                      >
+                        Dismiss
+                      </Button>
+                    )}
+                  </div>
+                ),
+              },
+            ]}
+            emptyTitle="No alerts flagged for this case"
+            emptyDescription="User-created alerts will appear here. Note: nothing creates alerts automatically."
+            emptyAction={
+              <Button size="sm" onClick={() => setIsCreateAlertOpen(true)} icon={<Plus className="w-3.5 h-3.5" />}>
+                Flag Alert
+              </Button>
+            }
+          />
+        </div>
       )}
+
+      {/* Link Existing Entity Dialog */}
+      <Modal
+        isOpen={isLinkEntityOpen}
+        onClose={() => setIsLinkEntityOpen(false)}
+        title="Link Existing Entity to Investigation"
+        description="Select an existing entity record from the repository to associate with this case."
+      >
+        <div className="space-y-4">
+          <Select
+            label="Select Entity to Link"
+            required
+            value={selectedEntityIdToLink}
+            onChange={(e) => setSelectedEntityIdToLink(e.target.value)}
+          >
+            <option value="">-- Choose an entity --</option>
+            {allEntities.map((ent) => (
+              <option key={ent.id} value={ent.id}>
+                {ent.canonical_name} ({ent.entity_type}) — {ent.id.slice(0, 8)}...
+              </option>
+            ))}
+          </Select>
+
+          <p className="text-xs text-text-muted">
+            If the entity is already linked, the system will report "already linked" without creating duplicates.
+          </p>
+
+          <div className="flex items-center justify-end gap-3 pt-3 border-t border-border">
+            <Button variant="secondary" onClick={() => setIsLinkEntityOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              disabled={!selectedEntityIdToLink}
+              isLoading={linkEntityMutation.isPending}
+              onClick={() => linkEntityMutation.mutate(selectedEntityIdToLink)}
+            >
+              Link to Case
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* Upload Document Dialog */}
+      <Modal
+        isOpen={isUploadDocOpen}
+        onClose={() => setIsUploadDocOpen(false)}
+        title="Upload Investigation Document"
+        description="Process a .pdf or .txt document (max 10 MB). Text and entities will be extracted."
+      >
+        <form onSubmit={handleDocUploadSubmit} className="space-y-4">
+          {/* Mode Switcher Tabs */}
+          <div className="flex items-center gap-2 p-1 rounded-lg bg-surface-raised border border-border">
+            <button
+              type="button"
+              onClick={() => setDocUploadMode('file')}
+              className={`flex-1 py-1.5 text-xs font-medium rounded-md transition-colors ${
+                docUploadMode === 'file' ? 'bg-surface text-text-primary shadow-sm' : 'text-text-muted hover:text-text-secondary'
+              }`}
+            >
+              Upload .PDF / .TXT
+            </button>
+            <button
+              type="button"
+              onClick={() => setDocUploadMode('text')}
+              className={`flex-1 py-1.5 text-xs font-medium rounded-md transition-colors ${
+                docUploadMode === 'text' ? 'bg-surface text-text-primary shadow-sm' : 'text-text-muted hover:text-text-secondary'
+              }`}
+            >
+              Paste Text Directly
+            </button>
+          </div>
+
+          {docUploadMode === 'file' ? (
+            <div>
+              <label className="block text-xs font-medium text-text-secondary mb-1.5">
+                File (.pdf or .txt, max 10 MB) <span className="text-status-error">*</span>
+              </label>
+              <input
+                type="file"
+                accept=".pdf,.txt"
+                onChange={(e) => {
+                  const file = e.target.files?.[0] || null;
+                  if (file && file.size > 10 * 1024 * 1024) {
+                    toastError('Selected file exceeds 10 MB limit');
+                    setUploadFile(null);
+                    return;
+                  }
+                  setUploadFile(file);
+                }}
+                className="w-full text-sm text-text-secondary file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-surface-raised file:text-accent hover:file:bg-bg-hover cursor-pointer border border-border rounded-lg p-2 bg-surface-raised/40"
+              />
+              <p className="text-[11px] text-text-muted mt-1.5">
+                Scanned PDFs without digital text will produce an empty extraction notice.
+              </p>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              <Input
+                label="Virtual File Name"
+                placeholder="e.g. suspect-interview.txt"
+                value={pasteFileName}
+                onChange={(e) => setPasteFileName(e.target.value)}
+                helperText="Will be sent as a .txt file"
+              />
+              <Textarea
+                label="Evidence Text to Extract"
+                required
+                rows={6}
+                placeholder="Paste statements, phone numbers, plate numbers, emails, transcripts..."
+                value={pasteText}
+                onChange={(e) => setPasteText(e.target.value)}
+              />
+            </div>
+          )}
+
+          <div className="flex items-center justify-end gap-3 pt-3 border-t border-border">
+            <Button type="button" variant="secondary" onClick={() => setIsUploadDocOpen(false)}>
+              Cancel
+            </Button>
+            <Button type="submit" isLoading={uploadDocMutation.isPending} icon={<Upload className="w-3.5 h-3.5" />}>
+              Process & Extract Entities
+            </Button>
+          </div>
+        </form>
+      </Modal>
+
+      {/* Add Source Dialog */}
+      <Modal
+        isOpen={isCreateSourceOpen}
+        onClose={() => setIsCreateSourceOpen(false)}
+        title="Add Information Source"
+        description="Register a data source origin for this investigation."
+      >
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (!sourceForm.source_type.trim() || !sourceForm.source_name.trim()) {
+              toastError('Source type and source name are required');
+              return;
+            }
+            createSourceMutation.mutate(sourceForm);
+          }}
+          className="space-y-4"
+        >
+          <Input
+            label="Source Type"
+            required
+            placeholder="e.g. Telecom CDR, Bank Statement, Surveillance Log, Informant"
+            value={sourceForm.source_type}
+            onChange={(e) => setSourceForm({ ...sourceForm, source_type: e.target.value })}
+            helperText="Free text per backend contract"
+          />
+
+          <Input
+            label="Source Name"
+            required
+            placeholder="e.g. Airtel CDR Tower Dump - North Sector"
+            value={sourceForm.source_name}
+            onChange={(e) => setSourceForm({ ...sourceForm, source_name: e.target.value })}
+          />
+
+          <Input
+            label="Reference Code"
+            placeholder="e.g. REF-CDR-2026-X01"
+            value={sourceForm.reference_code || ''}
+            onChange={(e) => setSourceForm({ ...sourceForm, reference_code: e.target.value })}
+          />
+
+          <Textarea
+            label="Description"
+            rows={2}
+            placeholder="Custody details, collection date, notes..."
+            value={sourceForm.description || ''}
+            onChange={(e) => setSourceForm({ ...sourceForm, description: e.target.value })}
+          />
+
+          <div className="flex items-center justify-end gap-3 pt-3 border-t border-border">
+            <Button type="button" variant="secondary" onClick={() => setIsCreateSourceOpen(false)}>
+              Cancel
+            </Button>
+            <Button type="submit" isLoading={createSourceMutation.isPending}>
+              Add Source
+            </Button>
+          </div>
+        </form>
+      </Modal>
+
+      {/* Add Alert Dialog */}
+      <Modal
+        isOpen={isCreateAlertOpen}
+        onClose={() => setIsCreateAlertOpen(false)}
+        title="Flag Investigation Alert"
+        description="Create a manual priority alert for this case."
+      >
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (!alertForm.alert_type.trim() || !alertForm.title.trim() || !alertForm.description.trim()) {
+              toastError('Alert type, title, and description are required');
+              return;
+            }
+            createAlertMutation.mutate(alertForm);
+          }}
+          className="space-y-4"
+        >
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <Input
+              label="Alert Type"
+              required
+              placeholder="e.g. Flight Risk, Money Transfer, Vehicle Sighting"
+              value={alertForm.alert_type}
+              onChange={(e) => setAlertForm({ ...alertForm, alert_type: e.target.value })}
+              helperText="Free text per backend contract"
+            />
+            <Select
+              label="Severity Level"
+              value={alertForm.severity}
+              onChange={(e) => setAlertForm({ ...alertForm, severity: e.target.value as AlertSeverity })}
+            >
+              <option value="low">Low</option>
+              <option value="medium">Medium</option>
+              <option value="high">High</option>
+              <option value="critical">Critical</option>
+            </Select>
+          </div>
+
+          <Input
+            label="Alert Title"
+            required
+            placeholder="e.g. Unregistered SIM card active in target zone"
+            value={alertForm.title}
+            onChange={(e) => setAlertForm({ ...alertForm, title: e.target.value })}
+          />
+
+          <Textarea
+            label="Description / Intelligence Details"
+            required
+            rows={3}
+            placeholder="Detailed trigger rationale and recommended actions..."
+            value={alertForm.description}
+            onChange={(e) => setAlertForm({ ...alertForm, description: e.target.value })}
+          />
+
+          <p className="text-[11px] text-text-muted">
+            Note: Nothing creates alerts automatically in the backend.
+          </p>
+
+          <div className="flex items-center justify-end gap-3 pt-3 border-t border-border">
+            <Button type="button" variant="secondary" onClick={() => setIsCreateAlertOpen(false)}>
+              Cancel
+            </Button>
+            <Button type="submit" isLoading={createAlertMutation.isPending}>
+              Flag Alert
+            </Button>
+          </div>
+        </form>
+      </Modal>
     </div>
-  )
-}
+  );
+};

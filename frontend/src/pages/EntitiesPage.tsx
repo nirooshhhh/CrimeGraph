@@ -1,385 +1,395 @@
-import React, { useState, useEffect } from 'react'
-import { useNavigate, useOutletContext, useSearchParams } from 'react-router-dom'
-import {
-  Users,
-  Search,
-  Filter,
-  Plus,
-  Phone,
-  Car,
-  MapPin,
-  Building2,
-  User,
-  Shield,
-  ExternalLink,
-  Tag,
-  CheckCircle2,
-  Clock,
-  Layers,
-} from 'lucide-react'
-import { Card } from '../components/ui/Card'
-import { Button } from '../components/ui/Button'
-import { Input } from '../components/ui/Input'
-import { Modal } from '../components/ui/Modal'
-import { Badge } from '../components/ui/Badge'
-import { EmptyState } from '../components/ui/EmptyState'
-import { entitiesService } from '../services/entitiesService'
-import { DEMO_ENTITIES, DEMO_CASES } from '../data/demoData'
-import { Entity, EntityType, Case } from '../types'
-import {
-  formatDate,
-  formatRelativeTime,
-  ENTITY_COLORS,
-  SEVERITY_BADGES,
-} from '../lib/utils'
+import React, { useState, useMemo } from 'react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { Link, useNavigate } from 'react-router-dom';
+import { Users, Plus, ExternalLink, Shield, Info, ArrowRight, CheckCircle2 } from 'lucide-react';
+import { fetchEntities, createEntity, fetchCases, linkEntityToCase } from '../api';
+import { DataTable, Column } from '../components/common/DataTable';
+import { Button } from '../components/common/Button';
+import { Modal } from '../components/common/Modal';
+import { Input, Select } from '../components/common/FormFields';
+import { EntityTypeBadge, VerificationBadge } from '../components/common/Badge';
+import { useToast } from '../context/ToastContext';
+import { getErrorMessage } from '../api/client';
+import type { Entity, EntityType, CreateEntityPayload } from '../types';
 
 export const EntitiesPage: React.FC = () => {
-  const navigate = useNavigate()
-  const [searchParams] = useSearchParams()
-  const { cases, activeCaseId, isLiveApi } = useOutletContext<{
-    cases: Case[]
-    activeCaseId: string
-    isLiveApi: boolean
-  }>()
+  const navigate = useNavigate();
+  const queryClient = useQueryClient();
+  const { success, error: toastError, info } = useToast();
 
-  const [entities, setEntities] = useState<Entity[]>(DEMO_ENTITIES)
-  const [searchTerm, setSearchTerm] = useState(searchParams.get('search') || '')
-  const [selectedType, setSelectedType] = useState<string>('all')
-  const [riskFilter, setRiskFilter] = useState<string>('all')
-  const [isLoading, setIsLoading] = useState(false)
-  const [isModalOpen, setIsModalOpen] = useState(false)
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [selectedTypeFilter, setSelectedTypeFilter] = useState('');
 
-  // New Entity Form
-  const [entityType, setEntityType] = useState<EntityType>('person')
-  const [label, setLabel] = useState('')
-  const [identifier, setIdentifier] = useState('')
-  const [targetCaseId, setTargetCaseId] = useState(activeCaseId === 'all' ? (cases[0]?.id || 'case-001') : activeCaseId)
-  const [riskLevel, setRiskLevel] = useState<'low' | 'medium' | 'high' | 'critical'>('medium')
-  const [isSubmitting, setIsSubmitting] = useState(false)
+  // Form state
+  const [entityType, setEntityType] = useState<EntityType>('person');
+  const [canonicalName, setCanonicalName] = useState('');
+  const [attributeRows, setAttributeRows] = useState<Array<{ key: string; value: string }>>([
+    { key: '', value: '' },
+  ]);
 
-  const fetchEntities = async () => {
-    setIsLoading(true)
-    try {
-      if (isLiveApi) {
-        const data = await entitiesService.getEntities()
-        if (data && data.length > 0) setEntities(data)
-      }
-    } catch (err) {
-      console.warn('Live entities failed, keeping demo dataset', err)
-    } finally {
-      setIsLoading(false)
-    }
-  }
+  // Post-creation link to investigation offer modal
+  const [createdEntity, setCreatedEntity] = useState<Entity | null>(null);
+  const [selectedCaseToLink, setSelectedCaseToLink] = useState('');
 
-  useEffect(() => {
-    fetchEntities()
-  }, [isLiveApi])
+  const { data: entities = [], isLoading } = useQuery({
+    queryKey: ['entities'],
+    queryFn: fetchEntities,
+  });
 
-  const handleCreateEntity = async (e: React.FormEvent) => {
-    e.preventDefault()
-    if (!label.trim()) return
+  const { data: cases = [] } = useQuery({
+    queryKey: ['cases'],
+    queryFn: fetchCases,
+  });
 
-    setIsSubmitting(true)
-    try {
-      const payload = {
-        entity_type: entityType,
-        label: label.trim(),
-        name: label.trim(),
-        identifier: identifier.trim(),
-        case_id: targetCaseId,
-        risk_level: riskLevel,
-        confidence_score: 0.95,
-      }
+  const filteredEntities = useMemo(() => {
+    if (!selectedTypeFilter) return entities;
+    return entities.filter(
+      (e) => (e.entity_type || '').toLowerCase() === selectedTypeFilter.toLowerCase()
+    );
+  }, [entities, selectedTypeFilter]);
 
-      if (isLiveApi) {
-        const created = await entitiesService.createEntity(payload)
-        setEntities((prev) => [created, ...prev])
+  const createMutation = useMutation({
+    mutationFn: (payload: CreateEntityPayload) => createEntity(payload),
+    onSuccess: (newEntity) => {
+      queryClient.invalidateQueries({ queryKey: ['entities'] });
+      queryClient.invalidateQueries({ queryKey: ['dashboard-stats'] });
+      success(`Entity "${newEntity.canonical_name}" created successfully!`);
+      setIsModalOpen(false);
+      // Reset form
+      setCanonicalName('');
+      setAttributeRows([{ key: '', value: '' }]);
+      // Offer linking to an investigation
+      setCreatedEntity(newEntity);
+    },
+    onError: (err) => {
+      toastError(getErrorMessage(err), 'Failed to create entity');
+    },
+  });
+
+  const linkMutation = useMutation({
+    mutationFn: ({ caseId, entityId }: { caseId: string; entityId: string }) =>
+      linkEntityToCase(caseId, entityId),
+    onSuccess: (res) => {
+      queryClient.invalidateQueries({ queryKey: ['graph'] });
+      if (res.alreadyLinked) {
+        info('Entity was already linked to this case.');
       } else {
-        const synthetic: Entity = {
-          id: `ent-${Date.now()}`,
-          case_id: targetCaseId,
-          case_ids: [targetCaseId],
-          entity_type: entityType,
-          label: payload.label,
-          name: payload.label,
-          identifier: payload.identifier,
-          normalized_value: payload.label.toUpperCase(),
-          confidence_score: 0.95,
-          risk_level: riskLevel,
-          created_at: new Date().toISOString(),
-          is_verified: true,
-        }
-        setEntities((prev) => [synthetic, ...prev])
+        success('Entity linked to investigation successfully!');
       }
+      const cId = createdEntity?.id;
+      setCreatedEntity(null);
+      setSelectedCaseToLink('');
+      if (cId) navigate(`/entities/${cId}`);
+    },
+    onError: (err) => {
+      toastError(getErrorMessage(err), 'Failed to link entity to investigation');
+    },
+  });
 
-      setIsModalOpen(false)
-      setLabel('')
-      setIdentifier('')
-    } catch (err) {
-      console.error(err)
-    } finally {
-      setIsSubmitting(false)
+  const handleAddAttributeRow = () => {
+    setAttributeRows([...attributeRows, { key: '', value: '' }]);
+  };
+
+  const handleRemoveAttributeRow = (idx: number) => {
+    setAttributeRows(attributeRows.filter((_, i) => i !== idx));
+  };
+
+  const handleAttributeChange = (idx: number, field: 'key' | 'value', val: string) => {
+    const updated = [...attributeRows];
+    updated[idx][field] = val;
+    setAttributeRows(updated);
+  };
+
+  const handleFormSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!canonicalName.trim()) {
+      toastError('Canonical entity name is required');
+      return;
     }
-  }
 
-  const typeConfig: Record<string, { label: string; icon: React.ElementType }> = {
-    all: { label: 'All Entity Classes', icon: Layers },
-    person: { label: 'People', icon: User },
-    phone: { label: 'Phone Numbers', icon: Phone },
-    vehicle: { label: 'Vehicles', icon: Car },
-    location: { label: 'Locations', icon: MapPin },
-    organization: { label: 'Organizations', icon: Building2 },
-  }
+    const attributesObj: Record<string, string> = {};
+    for (const row of attributeRows) {
+      if (row.key.trim() && row.value.trim()) {
+        attributesObj[row.key.trim()] = row.value.trim();
+      }
+    }
 
-  const filteredEntities = entities.filter((e) => {
-    const matchesSearch =
-      (e.label && e.label.toLowerCase().includes(searchTerm.toLowerCase())) ||
-      (e.name && e.name.toLowerCase().includes(searchTerm.toLowerCase())) ||
-      (e.identifier && e.identifier.toLowerCase().includes(searchTerm.toLowerCase())) ||
-      (e.normalized_value && e.normalized_value.toLowerCase().includes(searchTerm.toLowerCase()))
-    const matchesType = selectedType === 'all' || e.entity_type === selectedType
-    const matchesRisk = riskFilter === 'all' || e.risk_level === riskFilter
-    const matchesCase =
-      activeCaseId === 'all' ||
-      e.case_id === activeCaseId ||
-      e.case_ids?.includes(activeCaseId)
+    const payload: CreateEntityPayload = {
+      entity_type: entityType,
+      canonical_name: canonicalName.trim(),
+    };
+    if (Object.keys(attributesObj).length > 0) {
+      payload.attributes = attributesObj;
+    }
 
-    return matchesSearch && matchesType && matchesRisk && matchesCase
-  })
+    createMutation.mutate(payload);
+  };
+
+  const columns: Column<Entity>[] = [
+    {
+      key: 'canonical_name',
+      header: 'Canonical Name / Value',
+      render: (row) => (
+        <Link
+          to={`/entities/${row.id}`}
+          className="font-medium text-text-primary hover:text-accent transition-colors flex items-center gap-1.5"
+        >
+          <span>{row.canonical_name}</span>
+          <ExternalLink className="w-3 h-3 text-text-muted opacity-0 hover:opacity-100" />
+        </Link>
+      ),
+    },
+    {
+      key: 'entity_type',
+      header: 'Entity Type',
+      render: (row) => <EntityTypeBadge type={row.entity_type} />,
+    },
+    {
+      key: 'normalized_name',
+      header: 'Normalized Identifier',
+      render: (row) => (
+        <span className="font-mono text-xs text-text-muted">{row.normalized_name || '—'}</span>
+      ),
+    },
+    {
+      key: 'verification_status',
+      header: 'Verification Status',
+      render: (row) => <VerificationBadge status={row.verification_status} />,
+    },
+    {
+      key: 'created_at',
+      header: 'Created Date',
+      render: (row) => (
+        <span className="text-xs text-text-muted tabular-nums">
+          {row.created_at ? new Date(row.created_at).toLocaleDateString() : '—'}
+        </span>
+      ),
+    },
+    {
+      key: 'actions',
+      header: '',
+      sortable: false,
+      align: 'right',
+      render: (row) => (
+        <Link
+          to={`/entities/${row.id}`}
+          className="text-xs text-accent hover:underline font-medium"
+        >
+          View Profile
+        </Link>
+      ),
+    },
+  ];
 
   return (
-    <div className="space-y-6 animate-fade-in">
-      {/* Header */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-2 border-b border-border-subtle">
+    <div className="space-y-6">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <h2 className="text-xl font-bold tracking-tight text-text-primary">
-            Entity Intelligence Catalog
-          </h2>
-          <p className="text-xs text-text-muted mt-0.5">
-            Indexed nodes across investigations: People, Phone Numbers, Vehicles, Locations, and Organizations.
+          <h2 className="text-2xl font-bold tracking-tight text-text-primary">Entities Repository</h2>
+          <p className="text-sm text-text-secondary mt-1">
+            Global repository of known suspects, phone numbers, vehicle registrations, and organizations.
           </p>
         </div>
-        <Button
-          size="sm"
-          variant="primary"
-          onClick={() => setIsModalOpen(true)}
-          icon={<Plus className="w-4 h-4" />}
-          className="font-mono text-xs font-semibold"
-        >
-          Register Entity Node
+        <Button onClick={() => setIsModalOpen(true)} icon={<Plus className="w-4 h-4" />}>
+          New Entity
         </Button>
       </div>
 
-      {/* Filter and Category Pills */}
-      <div className="space-y-3">
-        <div className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-thin">
-          {Object.entries(typeConfig).map(([key, config]) => {
-            const Icon = config.icon
-            const isSelected = selectedType === key
-            const count =
-              key === 'all'
-                ? entities.length
-                : entities.filter((e) => e.entity_type === key).length
+      <DataTable
+        data={filteredEntities}
+        columns={columns}
+        searchPlaceholder="Search entities by name or identifier..."
+        filterControls={
+          <select
+            value={selectedTypeFilter}
+            onChange={(e) => setSelectedTypeFilter(e.target.value)}
+            className="bg-surface-raised border border-border rounded-lg px-2.5 py-2 text-xs text-text-primary focus:outline-none focus:ring-1 focus:ring-accent"
+          >
+            <option value="">All Entity Types</option>
+            <option value="person">Persons</option>
+            <option value="phone">Phones</option>
+            <option value="vehicle">Vehicles</option>
+            <option value="location">Locations</option>
+            <option value="organization">Organizations</option>
+            <option value="account">Accounts</option>
+            <option value="other">Other</option>
+          </select>
+        }
+        isLoading={isLoading}
+        emptyTitle="No entities recorded"
+        emptyDescription="Create an entity manually or upload evidence documents to extract entities automatically."
+        emptyAction={
+          <Button size="sm" onClick={() => setIsModalOpen(true)} icon={<Plus className="w-3.5 h-3.5" />}>
+            Create Entity
+          </Button>
+        }
+      />
 
-            return (
-              <button
-                key={key}
-                onClick={() => setSelectedType(key)}
-                className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium transition-all whitespace-nowrap cursor-pointer border ${
-                  isSelected
-                    ? 'bg-amber-forensic/15 text-amber-forensic border-amber-forensic/40 font-semibold'
-                    : 'bg-bg-secondary/70 text-text-secondary border-border-subtle hover:text-text-primary hover:bg-bg-elevated'
-                }`}
-              >
-                <Icon className="w-3.5 h-3.5" />
-                <span>{config.label}</span>
-                <span className="font-mono text-[10px] px-1.5 py-0.2 rounded-full bg-bg-elevated text-text-muted">
-                  {count}
-                </span>
-              </button>
-            )
-          })}
-        </div>
-
-        {/* Search & Risk Filter */}
-        <Card className="p-3 bg-bg-secondary/80 border-border-subtle">
-          <div className="flex flex-col md:flex-row items-center gap-3">
-            <div className="relative flex-1 w-full">
-              <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-text-muted" />
-              <input
-                type="text"
-                placeholder="Search by entity name, alias, license plate, MSISDN, or identifier..."
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                className="w-full bg-bg-elevated border border-border-subtle rounded-lg pl-8 pr-3 py-1.5 text-xs text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-1 focus:ring-amber-forensic"
-              />
-            </div>
-            <select
-              value={riskFilter}
-              onChange={(e) => setRiskFilter(e.target.value)}
-              className="bg-bg-elevated border border-border-subtle rounded-lg px-2.5 py-1.5 text-xs text-text-primary focus:outline-none focus:ring-1 focus:ring-amber-forensic"
-            >
-              <option value="all">All Risk Levels</option>
-              <option value="critical">Critical Risk</option>
-              <option value="high">High Risk</option>
-              <option value="medium">Medium Risk</option>
-              <option value="low">Low Risk</option>
-            </select>
-          </div>
-        </Card>
-      </div>
-
-      {/* Entities Grid */}
-      {filteredEntities.length === 0 ? (
-        <EmptyState
-          title="No Entities Found"
-          description="Adjust your search criteria or register a new target entity."
-          actionLabel="Register Entity"
-          onAction={() => setIsModalOpen(true)}
-        />
-      ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {filteredEntities.map((ent) => {
-            const styling = ENTITY_COLORS[ent.entity_type] || {
-              bg: 'bg-slate-500/10',
-              text: 'text-slate-400',
-              border: 'border-slate-500/30',
-              hex: '#94A3B8',
-            }
-
-            return (
-              <Card
-                key={ent.id}
-                onClick={() => navigate(`/entities/${ent.id}`)}
-                interactive
-                className="p-4 bg-bg-secondary/90 border-border-subtle hover:border-amber-forensic/40 flex flex-col justify-between space-y-3 group"
-              >
-                <div className="space-y-2">
-                  <div className="flex items-start justify-between gap-2">
-                    <span
-                      className={`text-[10px] font-mono px-2 py-0.5 rounded border uppercase font-semibold ${styling.bg} ${styling.text} ${styling.border}`}
-                    >
-                      {ent.entity_type}
-                    </span>
-                    {ent.risk_level && (
-                      <span className={`badge ${SEVERITY_BADGES[ent.risk_level] || 'badge-gray'} text-[9px]`}>
-                        {ent.risk_level.toUpperCase()} RISK
-                      </span>
-                    )}
-                  </div>
-
-                  <div>
-                    <h3 className="text-sm font-bold text-text-primary group-hover:text-amber-light transition-colors truncate">
-                      {ent.label || ent.name}
-                    </h3>
-                    <p className="text-[11px] text-text-muted font-mono truncate mt-0.5">
-                      {ent.identifier || ent.normalized_value || 'No identifier recorded'}
-                    </p>
-                  </div>
-                </div>
-
-                <div className="pt-2 border-t border-border-subtle/60 flex items-center justify-between text-[11px] text-text-muted font-mono">
-                  <div className="flex items-center gap-1.5">
-                    {ent.is_verified ? (
-                      <span className="flex items-center gap-1 text-emerald-400">
-                        <CheckCircle2 className="w-3 h-3" /> Verified
-                      </span>
-                    ) : (
-                      <span className="text-amber-400 font-sans text-[10px]">Unverified Lead</span>
-                    )}
-                  </div>
-                  <span className="flex items-center gap-1 group-hover:text-amber-forensic transition-colors">
-                    Dossier <ExternalLink className="w-3 h-3" />
-                  </span>
-                </div>
-              </Card>
-            )
-          })}
-        </div>
-      )}
-
-      {/* Modal: Register Entity */}
+      {/* New Entity Modal */}
       <Modal
         isOpen={isModalOpen}
         onClose={() => setIsModalOpen(false)}
-        title="Register New Entity Record"
-        subtitle="POST /api/entities — Add a verified or unverified entity node into the investigation database."
-        maxWidth="md"
+        title="Register New Entity"
+        description="Add a person, phone number, vehicle, or organization to the intelligence database."
       >
-        <form onSubmit={handleCreateEntity} className="space-y-4">
-          <div className="space-y-1.5">
-            <label className="block text-xs font-medium text-text-secondary">Entity Type</label>
-            <select
-              value={entityType}
-              onChange={(e) => setEntityType(e.target.value as EntityType)}
-              className="w-full bg-bg-elevated border border-border-subtle rounded-lg px-3 py-2 text-sm text-text-primary focus:outline-none focus:ring-1 focus:ring-amber-forensic"
-            >
-              <option value="person">Person (Suspect, Witness, Broker)</option>
-              <option value="phone">Phone Number (MSISDN, Burner, VoIP)</option>
-              <option value="vehicle">Vehicle (License Plate, VIN)</option>
-              <option value="location">Location (Terminal, Warehouse, Address)</option>
-              <option value="organization">Organization (Shell Co., Trust, Fleet)</option>
-            </select>
-          </div>
-
-          <Input
-            label="Entity Label / Name"
-            placeholder="e.g., Viktor Vane, +1 (555) 019-2834, NY-772-K9"
-            value={label}
-            onChange={(e) => setLabel(e.target.value)}
+        <form onSubmit={handleFormSubmit} className="space-y-4">
+          <Select
+            label="Entity Type"
             required
-          />
+            value={entityType}
+            onChange={(e) => setEntityType(e.target.value as EntityType)}
+          >
+            <option value="person">Person (Suspect, Witness, Official)</option>
+            <option value="phone">Phone Number (Cellular / Landline)</option>
+            <option value="vehicle">Vehicle (License Plate / Registration)</option>
+            <option value="location">Location / Address</option>
+            <option value="organization">Organization / Company / Syndicate</option>
+            <option value="account">Financial Account / Wallet</option>
+            <option value="other">Other (Email, IP, Domain, Object)</option>
+          </Select>
 
           <Input
-            label="Official Identifier / Code (Optional)"
-            placeholder="e.g., PASSPORT-K99281, VIN-WDB463, CORP-REG-DE"
-            value={identifier}
-            onChange={(e) => setIdentifier(e.target.value)}
+            label="Canonical Name / Identifier"
+            required
+            placeholder={
+              entityType === 'phone'
+                ? 'e.g. 9876543210'
+                : entityType === 'vehicle'
+                ? 'e.g. KA05AB1234'
+                : 'e.g. John Doe / Alpha Corp'
+            }
+            value={canonicalName}
+            onChange={(e) => setCanonicalName(e.target.value)}
+            helperText={
+              entityType === 'phone'
+                ? 'Tip: Enter plain 10 digits to match auto-detected entities.'
+                : entityType === 'vehicle'
+                ? 'Tip: Enter uppercase without spaces (e.g. KA05AB1234) for matching.'
+                : 'The primary display name for this entity'
+            }
           />
 
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1.5">
-              <label className="block text-xs font-medium text-text-secondary">
-                Investigation Scope
+          {/* Key-Value Attributes */}
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <label className="text-xs font-medium text-text-secondary">
+                Entity Attributes (Optional Key / Value)
               </label>
-              <select
-                value={targetCaseId}
-                onChange={(e) => setTargetCaseId(e.target.value)}
-                className="w-full bg-bg-elevated border border-border-subtle rounded-lg px-3 py-2 text-sm text-text-primary focus:outline-none focus:ring-1 focus:ring-amber-forensic"
+              <button
+                type="button"
+                onClick={handleAddAttributeRow}
+                className="text-xs text-accent hover:underline flex items-center gap-1 font-medium"
               >
-                {cases.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.case_number}
-                  </option>
-                ))}
-              </select>
+                <Plus className="w-3 h-3" /> Add Attribute
+              </button>
             </div>
 
-            <div className="space-y-1.5">
-              <label className="block text-xs font-medium text-text-secondary">Risk Profile</label>
-              <select
-                value={riskLevel}
-                onChange={(e) => setRiskLevel(e.target.value as any)}
-                className="w-full bg-bg-elevated border border-border-subtle rounded-lg px-3 py-2 text-sm text-text-primary focus:outline-none focus:ring-1 focus:ring-amber-forensic"
-              >
-                <option value="critical">Critical</option>
-                <option value="high">High</option>
-                <option value="medium">Medium</option>
-                <option value="low">Low</option>
-              </select>
+            <div className="space-y-2">
+              {attributeRows.map((row, idx) => (
+                <div key={idx} className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    placeholder="Key (e.g. role, bank, color)"
+                    value={row.key}
+                    onChange={(e) => handleAttributeChange(idx, 'key', e.target.value)}
+                    className="flex-1 bg-surface-raised border border-border rounded-lg px-2.5 py-1.5 text-xs text-text-primary placeholder-text-muted focus:outline-none focus:ring-1 focus:ring-accent"
+                  />
+                  <input
+                    type="text"
+                    placeholder="Value (e.g. Suspect, SBI, Blue)"
+                    value={row.value}
+                    onChange={(e) => handleAttributeChange(idx, 'value', e.target.value)}
+                    className="flex-1 bg-surface-raised border border-border rounded-lg px-2.5 py-1.5 text-xs text-text-primary placeholder-text-muted focus:outline-none focus:ring-1 focus:ring-accent"
+                  />
+                  {attributeRows.length > 1 && (
+                    <button
+                      type="button"
+                      onClick={() => handleRemoveAttributeRow(idx)}
+                      className="text-text-muted hover:text-status-error px-1.5 py-1 text-xs"
+                      aria-label="Remove attribute"
+                    >
+                      ×
+                    </button>
+                  )}
+                </div>
+              ))}
             </div>
           </div>
 
-          <div className="flex items-center justify-end gap-3 pt-3 border-t border-border-subtle">
-            <Button type="button" variant="ghost" size="sm" onClick={() => setIsModalOpen(false)}>
+          <div className="flex items-center justify-end gap-3 pt-3 border-t border-border">
+            <Button type="button" variant="secondary" onClick={() => setIsModalOpen(false)}>
               Cancel
             </Button>
-            <Button type="submit" variant="primary" size="sm" isLoading={isSubmitting}>
-              Register Entity
+            <Button type="submit" isLoading={createMutation.isPending}>
+              Create Entity
             </Button>
           </div>
         </form>
       </Modal>
+
+      {/* Post-Creation Offer to Link to an Investigation */}
+      <Modal
+        isOpen={!!createdEntity}
+        onClose={() => {
+          const id = createdEntity?.id;
+          setCreatedEntity(null);
+          if (id) navigate(`/entities/${id}`);
+        }}
+        title="Entity Created Successfully"
+        description={`"${createdEntity?.canonical_name}" has been registered in the database.`}
+      >
+        <div className="space-y-4">
+          <div className="p-3 rounded-lg bg-surface-raised border border-border flex items-center justify-between">
+            <div>
+              <div className="font-semibold text-sm text-text-primary">{createdEntity?.canonical_name}</div>
+              <div className="text-xs text-text-muted">Type: {createdEntity?.entity_type}</div>
+            </div>
+            <EntityTypeBadge type={createdEntity?.entity_type || 'other'} />
+          </div>
+
+          <p className="text-xs text-text-secondary leading-relaxed">
+            Would you like to associate this newly created entity with an active investigation case right away?
+          </p>
+
+          <Select
+            label="Select Investigation Case"
+            value={selectedCaseToLink}
+            onChange={(e) => setSelectedCaseToLink(e.target.value)}
+          >
+            <option value="">-- Choose an investigation --</option>
+            {cases.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.case_number} - {c.title}
+              </option>
+            ))}
+          </Select>
+
+          <div className="flex items-center justify-end gap-3 pt-3 border-t border-border">
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => {
+                const id = createdEntity?.id;
+                setCreatedEntity(null);
+                if (id) navigate(`/entities/${id}`);
+              }}
+            >
+              Skip Linking
+            </Button>
+            <Button
+              disabled={!selectedCaseToLink}
+              isLoading={linkMutation.isPending}
+              onClick={() => {
+                if (selectedCaseToLink && createdEntity) {
+                  linkMutation.mutate({ caseId: selectedCaseToLink, entityId: createdEntity.id });
+                }
+              }}
+            >
+              Link to Investigation
+            </Button>
+          </div>
+        </div>
+      </Modal>
     </div>
-  )
-}
+  );
+};

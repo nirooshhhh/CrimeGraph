@@ -1,315 +1,337 @@
-import React, { useState, useEffect } from 'react'
-import { useOutletContext } from 'react-router-dom'
-import {
-  PhoneCall,
-  Search,
-  Filter,
-  Plus,
-  PhoneIncoming,
-  PhoneOutgoing,
-  PhoneMissed,
-  Radio,
-  Clock,
-  ArrowUpDown,
-} from 'lucide-react'
-import { Card } from '../components/ui/Card'
-import { Button } from '../components/ui/Button'
-import { Input } from '../components/ui/Input'
-import { Modal } from '../components/ui/Modal'
-import { EmptyState } from '../components/ui/EmptyState'
-import { callRecordsService } from '../services/callRecordsService'
-import { DEMO_CALL_RECORDS, DEMO_CASES } from '../data/demoData'
-import { CallRecord, Case } from '../types'
-import { formatDate, formatDuration } from '../lib/utils'
+import React, { useState, useMemo } from 'react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { Link } from 'react-router-dom';
+import { PhoneCall, Plus, ArrowRight, Clock, Phone, ExternalLink } from 'lucide-react';
+import { fetchCallRecords, createCallRecord, fetchSources } from '../api';
+import { DataTable, Column } from '../components/common/DataTable';
+import { Button } from '../components/common/Button';
+import { Modal } from '../components/common/Modal';
+import { Input, Select } from '../components/common/FormFields';
+import { useEntityMap } from '../context/EntityMapContext';
+import { useToast } from '../context/ToastContext';
+import { getErrorMessage } from '../api/client';
+import type { CallRecord, CreateCallRecordPayload } from '../types';
 
 export const CallRecordsPage: React.FC = () => {
-  const { cases, activeCaseId, isLiveApi } = useOutletContext<{
-    cases: Case[]
-    activeCaseId: string
-    isLiveApi: boolean
-  }>()
+  const queryClient = useQueryClient();
+  const { entities, getEntityName, getEntity } = useEntityMap();
+  const { success, error: toastError } = useToast();
 
-  const [records, setRecords] = useState<CallRecord[]>(DEMO_CALL_RECORDS)
-  const [searchTerm, setSearchTerm] = useState('')
-  const [selectedCase, setSelectedCase] = useState<string>(activeCaseId)
-  const [typeFilter, setTypeFilter] = useState<string>('all')
-  const [isLoading, setIsLoading] = useState(false)
-  const [isModalOpen, setIsModalOpen] = useState(false)
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [selectedCallTypeFilter, setSelectedCallTypeFilter] = useState('');
+  const [formValues, setFormValues] = useState<{
+    caller_entity_id: string;
+    receiver_entity_id: string;
+    call_time: string;
+    duration_seconds: number;
+    call_type: string;
+    reference_code: string;
+    source_id: string;
+  }>({
+    caller_entity_id: '',
+    receiver_entity_id: '',
+    call_time: new Date().toISOString().slice(0, 16),
+    duration_seconds: 60,
+    call_type: 'voice',
+    reference_code: '',
+    source_id: '',
+  });
 
-  // New call record form
-  const [callerNumber, setCallerNumber] = useState('')
-  const [receiverNumber, setReceiverNumber] = useState('')
-  const [durationSeconds, setDurationSeconds] = useState(120)
-  const [callType, setCallType] = useState('outbound')
-  const [cellLocation, setCellLocation] = useState('Pier 42 Terminal Mast A')
-  const [formCaseId, setFormCaseId] = useState(cases[0]?.id || 'case-001')
-  const [isSubmitting, setIsSubmitting] = useState(false)
+  const { data: callRecords = [], isLoading } = useQuery({
+    queryKey: ['call-records'],
+    queryFn: fetchCallRecords,
+  });
 
-  const fetchCallRecords = async () => {
-    setIsLoading(true)
-    try {
-      if (isLiveApi) {
-        const data = await callRecordsService.getCallRecords()
-        if (data && data.length > 0) setRecords(data)
+  const { data: sources = [] } = useQuery({
+    queryKey: ['sources'],
+    queryFn: fetchSources,
+  });
+
+  // Client filtering
+  const filteredRecords = useMemo(() => {
+    if (!selectedCallTypeFilter) return callRecords;
+    return callRecords.filter(
+      (r) => (r.call_type || '').toLowerCase() === selectedCallTypeFilter.toLowerCase()
+    );
+  }, [callRecords, selectedCallTypeFilter]);
+
+  const createMutation = useMutation({
+    mutationFn: (payload: CreateCallRecordPayload) => {
+      if (payload.caller_entity_id === payload.receiver_entity_id) {
+        throw new Error('Caller and receiver entities must differ');
       }
-    } catch (e) {
-      console.warn('Failed loading call records from live backend', e)
-    } finally {
-      setIsLoading(false)
+      return createCallRecord(payload);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['call-records'] });
+      success('Call record logged successfully');
+      setIsModalOpen(false);
+      setFormValues({
+        caller_entity_id: '',
+        receiver_entity_id: '',
+        call_time: new Date().toISOString().slice(0, 16),
+        duration_seconds: 60,
+        call_type: 'voice',
+        reference_code: '',
+        source_id: '',
+      });
+    },
+    onError: (err) => {
+      toastError(getErrorMessage(err), 'Failed to log call record');
+    },
+  });
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!formValues.caller_entity_id || !formValues.receiver_entity_id) {
+      toastError('Caller and receiver entities are required');
+      return;
     }
-  }
-
-  useEffect(() => {
-    fetchCallRecords()
-  }, [isLiveApi])
-
-  const handleCreate = async (e: React.FormEvent) => {
-    e.preventDefault()
-    if (!callerNumber.trim() || !receiverNumber.trim()) return
-
-    setIsSubmitting(true)
-    try {
-      const payload = {
-        case_id: formCaseId,
-        caller_number: callerNumber.trim(),
-        receiver_number: receiverNumber.trim(),
-        call_timestamp: new Date().toISOString(),
-        duration_seconds: Number(durationSeconds),
-        call_type: callType,
-        cell_tower_location: cellLocation.trim(),
-      }
-
-      if (isLiveApi) {
-        const created = await callRecordsService.createCallRecord(payload)
-        setRecords((prev) => [created, ...prev])
-      } else {
-        const synthetic: CallRecord = {
-          id: `call-${Date.now()}`,
-          case_id: payload.case_id,
-          caller_number: payload.caller_number,
-          receiver_number: payload.receiver_number,
-          call_timestamp: payload.call_timestamp,
-          duration_seconds: payload.duration_seconds,
-          call_type: payload.call_type as any,
-          cell_tower_location: payload.cell_tower_location,
-        }
-        setRecords((prev) => [synthetic, ...prev])
-      }
-
-      setIsModalOpen(false)
-      setCallerNumber('')
-      setReceiverNumber('')
-    } catch (err) {
-      console.error(err)
-    } finally {
-      setIsSubmitting(false)
+    if (formValues.caller_entity_id === formValues.receiver_entity_id) {
+      toastError('Caller and receiver must be different entities');
+      return;
     }
-  }
+    if (!formValues.call_time) {
+      toastError('Call time is required');
+      return;
+    }
 
-  const filteredRecords = records.filter((r) => {
-    const matchesSearch =
-      r.caller_number.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      r.receiver_number.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      (r.cell_tower_location &&
-        r.cell_tower_location.toLowerCase().includes(searchTerm.toLowerCase()))
-    const matchesType = typeFilter === 'all' || r.call_type === typeFilter
-    const matchesCase = activeCaseId === 'all' || r.case_id === activeCaseId
+    const payload: CreateCallRecordPayload = {
+      caller_entity_id: formValues.caller_entity_id,
+      receiver_entity_id: formValues.receiver_entity_id,
+      call_time: new Date(formValues.call_time).toISOString(),
+      duration_seconds: Number(formValues.duration_seconds) || 0,
+    };
+    if (formValues.call_type) payload.call_type = formValues.call_type;
+    if (formValues.reference_code) payload.reference_code = formValues.reference_code;
+    if (formValues.source_id) payload.source_id = formValues.source_id;
 
-    return matchesSearch && matchesType && matchesCase
-  })
+    createMutation.mutate(payload);
+  };
+
+  const formatDuration = (seconds: number) => {
+    const m = Math.floor(seconds / 60);
+    const s = seconds % 60;
+    return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+  };
+
+  const columns: Column<CallRecord>[] = [
+    {
+      key: 'caller_entity_id',
+      header: 'Caller Entity',
+      render: (row) => (
+        <Link
+          to={`/entities/${row.caller_entity_id}`}
+          className="font-medium text-text-primary hover:text-accent transition-colors flex items-center gap-1.5"
+        >
+          <Phone className="w-3.5 h-3.5 text-text-muted" />
+          <span>{getEntityName(row.caller_entity_id)}</span>
+          <ExternalLink className="w-3 h-3 text-text-muted opacity-0 hover:opacity-100" />
+        </Link>
+      ),
+    },
+    {
+      key: 'direction',
+      header: '',
+      sortable: false,
+      render: () => <ArrowRight className="w-3.5 h-3.5 text-text-muted" />,
+    },
+    {
+      key: 'receiver_entity_id',
+      header: 'Receiver Entity',
+      render: (row) => (
+        <Link
+          to={`/entities/${row.receiver_entity_id}`}
+          className="font-medium text-text-primary hover:text-accent transition-colors flex items-center gap-1.5"
+        >
+          <Phone className="w-3.5 h-3.5 text-text-muted" />
+          <span>{getEntityName(row.receiver_entity_id)}</span>
+          <ExternalLink className="w-3 h-3 text-text-muted opacity-0 hover:opacity-100" />
+        </Link>
+      ),
+    },
+    {
+      key: 'call_time',
+      header: 'Call Timestamp',
+      render: (row) => (
+        <span className="text-xs text-text-muted tabular-nums">
+          {new Date(row.call_time).toLocaleString()}
+        </span>
+      ),
+    },
+    {
+      key: 'duration_seconds',
+      header: 'Duration',
+      render: (row) => (
+        <span className="text-xs font-mono tabular-nums text-text-primary flex items-center gap-1">
+          <Clock className="w-3 h-3 text-text-muted" />
+          {formatDuration(row.duration_seconds)}
+          <span className="text-text-muted text-[10px]">({row.duration_seconds}s)</span>
+        </span>
+      ),
+    },
+    {
+      key: 'call_type',
+      header: 'Call Type',
+      render: (row) => (
+        <span className="text-xs font-medium uppercase px-2 py-0.5 rounded bg-surface-raised border border-border text-text-secondary">
+          {row.call_type || 'voice'}
+        </span>
+      ),
+    },
+    {
+      key: 'reference_code',
+      header: 'CDR Reference',
+      render: (row) => (
+        <span className="font-mono text-xs text-text-muted">{row.reference_code || '—'}</span>
+      ),
+    },
+  ];
 
   return (
-    <div className="space-y-6 animate-fade-in">
-      {/* Header */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-2 border-b border-border-subtle">
+    <div className="space-y-6">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <h2 className="text-xl font-bold tracking-tight text-text-primary">
-            Call Detail Record (CDR) Telephony Workspace
-          </h2>
-          <p className="text-xs text-text-muted mt-0.5">
-            Interception logs, cell mast triangulation, burner subscribers, and call frequency correlation.
+          <h2 className="text-2xl font-bold tracking-tight text-text-primary">Call Detail Records (CDR)</h2>
+          <p className="text-sm text-text-secondary mt-1">
+            Telecommunication intercepts, call logs, duration timestamps, and phone identity linkages.
           </p>
         </div>
-        <Button
-          size="sm"
-          variant="primary"
-          onClick={() => setIsModalOpen(true)}
-          icon={<Plus className="w-4 h-4" />}
-          className="font-mono text-xs font-semibold"
-        >
-          Record CDR Entry
+        <Button onClick={() => setIsModalOpen(true)} icon={<Plus className="w-4 h-4" />}>
+          Log Call Record
         </Button>
       </div>
 
-      {/* Filter and Search Bar */}
-      <Card className="p-3 bg-bg-secondary/80 border-border-subtle">
-        <div className="flex flex-col md:flex-row items-center gap-3">
-          <div className="relative flex-1 w-full">
-            <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-text-muted" />
-            <input
-              type="text"
-              placeholder="Filter by caller number, recipient, or cell mast coordinates..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="w-full bg-bg-elevated border border-border-subtle rounded-lg pl-8 pr-3 py-1.5 text-xs text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-1 focus:ring-amber-forensic"
-            />
-          </div>
-
+      <DataTable
+        data={filteredRecords}
+        columns={columns}
+        searchPlaceholder="Search calls by entity names or ref code..."
+        searchFilter={(item, q) => {
+          const cName = getEntityName(item.caller_entity_id).toLowerCase();
+          const rName = getEntityName(item.receiver_entity_id).toLowerCase();
+          const ref = (item.reference_code || '').toLowerCase();
+          return cName.includes(q) || rName.includes(q) || ref.includes(q);
+        }}
+        filterControls={
           <div className="flex items-center gap-2">
             <select
-              value={typeFilter}
-              onChange={(e) => setTypeFilter(e.target.value)}
-              className="bg-bg-elevated border border-border-subtle rounded-lg px-2.5 py-1.5 text-xs text-text-primary focus:outline-none focus:ring-1 focus:ring-amber-forensic"
+              value={selectedCallTypeFilter}
+              onChange={(e) => setSelectedCallTypeFilter(e.target.value)}
+              className="bg-surface-raised border border-border rounded-lg px-2.5 py-2 text-xs text-text-primary focus:outline-none focus:ring-1 focus:ring-accent"
             >
-              <option value="all">All Direction Types</option>
-              <option value="outbound">Outbound Calls</option>
-              <option value="inbound">Inbound Calls</option>
-              <option value="missed">Missed / Unanswered</option>
+              <option value="">All Call Types</option>
+              <option value="voice">Voice</option>
+              <option value="sms">SMS</option>
+              <option value="voip">VoIP</option>
+              <option value="video">Video</option>
             </select>
           </div>
-        </div>
-      </Card>
+        }
+        isLoading={isLoading}
+        emptyTitle="No call records logged"
+        emptyDescription="Telecommunication call events linking caller and receiver entities will appear here."
+        emptyAction={
+          <Button size="sm" onClick={() => setIsModalOpen(true)} icon={<Plus className="w-3.5 h-3.5" />}>
+            Log Call Record
+          </Button>
+        }
+      />
 
-      {/* Records Table */}
-      <Card className="p-0 bg-bg-secondary/90 border-border-subtle overflow-hidden">
-        {filteredRecords.length === 0 ? (
-          <div className="p-12 text-center text-xs text-text-muted">
-            No telephony records matching current criteria.
-          </div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs">
-              <thead>
-                <tr className="border-b border-border-subtle bg-bg-elevated/40 text-text-muted uppercase font-mono">
-                  <th className="py-3 px-4">Direction</th>
-                  <th className="py-3 px-4">Origin (Caller)</th>
-                  <th className="py-3 px-4">Destination (Receiver)</th>
-                  <th className="py-3 px-4">Timestamp</th>
-                  <th className="py-3 px-4">Duration</th>
-                  <th className="py-3 px-4">Cell Tower / Sector</th>
-                  <th className="py-3 px-4">Dossier</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-border-subtle/50 font-mono">
-                {filteredRecords.map((c) => (
-                  <tr key={c.id} className="hover:bg-bg-elevated/50 transition-colors">
-                    <td className="py-3 px-4">
-                      {c.call_type === 'inbound' ? (
-                        <span className="flex items-center gap-1.5 text-teal-400">
-                          <PhoneIncoming className="w-3.5 h-3.5" /> Inbound
-                        </span>
-                      ) : c.call_type === 'outbound' ? (
-                        <span className="flex items-center gap-1.5 text-amber-forensic">
-                          <PhoneOutgoing className="w-3.5 h-3.5" /> Outbound
-                        </span>
-                      ) : (
-                        <span className="flex items-center gap-1.5 text-rose-400">
-                          <PhoneMissed className="w-3.5 h-3.5" /> Missed
-                        </span>
-                      )}
-                    </td>
-                    <td className="py-3 px-4 font-bold text-sky-400">{c.caller_number}</td>
-                    <td className="py-3 px-4 font-bold text-amber-300">{c.receiver_number}</td>
-                    <td className="py-3 px-4 text-text-muted font-sans text-xs">
-                      {formatDate(c.call_timestamp)}
-                    </td>
-                    <td className="py-3 px-4 text-text-primary">
-                      {formatDuration(c.duration_seconds)}
-                    </td>
-                    <td className="py-3 px-4 text-text-secondary font-sans text-xs">
-                      {c.cell_tower_location || 'Sector Unknown'}
-                    </td>
-                    <td className="py-3 px-4 text-text-muted text-[11px]">{c.case_id}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </Card>
-
-      {/* Modal: Record CDR */}
+      {/* Modal */}
       <Modal
         isOpen={isModalOpen}
         onClose={() => setIsModalOpen(false)}
-        title="Log Telephony Interception Record"
-        subtitle="POST /api/call-records — Attach raw call detail record to case investigation."
-        maxWidth="md"
+        title="Log Telecommunication Call Record"
+        description="Record a direct call transmission between two known entities."
       >
-        <form onSubmit={handleCreate} className="space-y-4">
-          <div className="space-y-1.5">
-            <label className="block text-xs font-medium text-text-secondary">
-              Investigation Dossier
-            </label>
-            <select
-              value={formCaseId}
-              onChange={(e) => setFormCaseId(e.target.value)}
-              className="w-full bg-bg-elevated border border-border-subtle rounded-lg px-3 py-2 text-sm text-text-primary focus:outline-none focus:ring-1 focus:ring-amber-forensic"
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <Select
+              label="Caller Entity"
+              required
+              value={formValues.caller_entity_id}
+              onChange={(e) => setFormValues({ ...formValues, caller_entity_id: e.target.value })}
             >
-              {cases.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.case_number} — {c.title}
+              <option value="">-- Select Caller --</option>
+              {entities.map((e) => (
+                <option key={e.id} value={e.id}>
+                  {e.canonical_name} ({e.entity_type})
                 </option>
               ))}
-            </select>
+            </Select>
+
+            <Select
+              label="Receiver Entity"
+              required
+              value={formValues.receiver_entity_id}
+              onChange={(e) => setFormValues({ ...formValues, receiver_entity_id: e.target.value })}
+            >
+              <option value="">-- Select Receiver --</option>
+              {entities.map((e) => (
+                <option key={e.id} value={e.id}>
+                  {e.canonical_name} ({e.entity_type})
+                </option>
+              ))}
+            </Select>
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <Input
-              label="Caller Number (MSISDN)"
-              placeholder="+1 (555) 019-2834"
-              value={callerNumber}
-              onChange={(e) => setCallerNumber(e.target.value)}
+              label="Call Timestamp"
+              type="datetime-local"
               required
+              value={formValues.call_time}
+              onChange={(e) => setFormValues({ ...formValues, call_time: e.target.value })}
             />
-            <Input
-              label="Receiver Number (MSISDN)"
-              placeholder="+44 20 7946 0912"
-              value={receiverNumber}
-              onChange={(e) => setReceiverNumber(e.target.value)}
-              required
-            />
-          </div>
-
-          <div className="grid grid-cols-2 gap-3">
             <Input
               label="Duration (Seconds)"
               type="number"
-              value={durationSeconds}
-              onChange={(e) => setDurationSeconds(Number(e.target.value))}
+              min="0"
               required
+              value={formValues.duration_seconds}
+              onChange={(e) => setFormValues({ ...formValues, duration_seconds: parseInt(e.target.value, 10) || 0 })}
+              helperText="Sent as integer JSON number"
             />
-            <div className="space-y-1.5">
-              <label className="block text-xs font-medium text-text-secondary">Call Type</label>
-              <select
-                value={callType}
-                onChange={(e) => setCallType(e.target.value)}
-                className="w-full bg-bg-elevated border border-border-subtle rounded-lg px-3 py-2 text-sm text-text-primary focus:outline-none focus:ring-1 focus:ring-amber-forensic"
-              >
-                <option value="outbound">Outbound</option>
-                <option value="inbound">Inbound</option>
-                <option value="missed">Missed</option>
-              </select>
-            </div>
           </div>
 
-          <Input
-            label="Cell Mast / Sector Triangulation"
-            placeholder="e.g., Red Hook Terminal Mast A"
-            value={cellLocation}
-            onChange={(e) => setCellLocation(e.target.value)}
-          />
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <Input
+              label="Call Type"
+              placeholder="e.g. voice, sms, voip"
+              value={formValues.call_type}
+              onChange={(e) => setFormValues({ ...formValues, call_type: e.target.value })}
+            />
+            <Input
+              label="Reference Code"
+              placeholder="e.g. CDR-TOWER-771"
+              value={formValues.reference_code}
+              onChange={(e) => setFormValues({ ...formValues, reference_code: e.target.value })}
+            />
+          </div>
 
-          <div className="flex items-center justify-end gap-3 pt-3 border-t border-border-subtle">
-            <Button type="button" variant="ghost" size="sm" onClick={() => setIsModalOpen(false)}>
+          <Select
+            label="Originating Source (Optional)"
+            value={formValues.source_id}
+            onChange={(e) => setFormValues({ ...formValues, source_id: e.target.value })}
+          >
+            <option value="">-- No Source Linked --</option>
+            {sources.map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.source_name} ({s.source_type})
+              </option>
+            ))}
+          </Select>
+
+          <div className="flex items-center justify-end gap-3 pt-3 border-t border-border">
+            <Button type="button" variant="secondary" onClick={() => setIsModalOpen(false)}>
               Cancel
             </Button>
-            <Button type="submit" variant="primary" size="sm" isLoading={isSubmitting}>
-              Commit Call Record
+            <Button type="submit" isLoading={createMutation.isPending}>
+              Save Call Record
             </Button>
           </div>
         </form>
       </Modal>
     </div>
-  )
-}
+  );
+};

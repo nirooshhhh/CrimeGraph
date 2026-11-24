@@ -1,73 +1,83 @@
-import React from 'react'
-import { Routes, Route, Navigate } from 'react-router-dom'
-import { AppShell } from './components/layout/AppShell'
-import { OverviewPage } from './pages/OverviewPage'
-import { InvestigationsPage } from './pages/InvestigationsPage'
-import { InvestigationDetailPage } from './pages/InvestigationDetailPage'
-import { DocumentsPage } from './pages/DocumentsPage'
-import { EntitiesPage } from './pages/EntitiesPage'
-import { EntityDetailPage } from './pages/EntityDetailPage'
-import { MatchReviewPage } from './pages/MatchReviewPage'
-import { LinkAnalysisPage } from './pages/LinkAnalysisPage'
-import { ShortestPathPage } from './pages/ShortestPathPage'
-import { AlertsPage } from './pages/AlertsPage'
-import { CallRecordsPage } from './pages/CallRecordsPage'
-import { TransactionsPage } from './pages/TransactionsPage'
-import { ActivityLogsPage } from './pages/ActivityLogsPage'
-import { SettingsPage } from './pages/SettingsPage'
+import React from 'react';
+import { Routes, Route, Navigate } from 'react-router-dom';
+import { AppShell } from './components/layout/AppShell';
+
+// 01 Dashboard
+import { DashboardPage } from './pages/DashboardPage';
+
+// 02 Case Management
+import { InvestigationsPage } from './pages/InvestigationsPage';
+import { InvestigationDetailPage } from './pages/InvestigationDetailPage';
+import { SourcesPage } from './pages/SourcesPage';
+import { CallRecordsPage } from './pages/CallRecordsPage';
+import { TransactionsPage } from './pages/TransactionsPage';
+
+// 03 Document Intelligence
+import { DocumentsPage } from './pages/DocumentsPage';
+import { DocumentDetailPage } from './pages/DocumentDetailPage';
+
+// 04 Entity Matching
+import { EntitiesPage } from './pages/EntitiesPage';
+import { EntityDetailPage } from './pages/EntityDetailPage';
+import { MatchReviewPage } from './pages/MatchReviewPage';
+
+// 05 Network Explorer
+import { LinkAnalysisPage } from './pages/LinkAnalysisPage';
+import { RelationshipsPage } from './pages/RelationshipsPage';
+
+// 06 Alerts & Analytics
+import { AlertsPage } from './pages/AlertsPage';
+
+// 07 Audit & Administration
+import { AuditLogsPage } from './pages/AuditLogsPage';
 
 export default function App() {
   return (
     <Routes>
       <Route element={<AppShell />}>
-        {/* 1. Overview */}
-        <Route path="/" element={<Navigate to="/overview" replace />} />
-        <Route path="/overview" element={<OverviewPage />} />
+        {/* 01 Dashboard */}
+        <Route path="/" element={<DashboardPage />} />
+        <Route path="/dashboard" element={<Navigate to="/" replace />} />
+        <Route path="/overview" element={<Navigate to="/" replace />} />
 
-        {/* 2. Investigations */}
-        <Route path="/investigations" element={<InvestigationsPage />} />
-        <Route path="/investigations/:id" element={<InvestigationDetailPage />} />
-        <Route path="/cases" element={<Navigate to="/investigations" replace />} />
-        <Route path="/cases/:id" element={<Navigate to="/investigations/:id" replace />} />
+        {/* 02 Case Management */}
+        <Route path="/cases" element={<InvestigationsPage />} />
+        <Route path="/cases/:id" element={<InvestigationDetailPage />} />
+        <Route path="/investigations" element={<Navigate to="/cases" replace />} />
+        <Route path="/investigations/:id" element={<Navigate to="/cases/:id" replace />} />
 
-        {/* 3. Evidence & Documents */}
-        <Route path="/documents" element={<DocumentsPage />} />
-        <Route path="/evidence" element={<Navigate to="/documents" replace />} />
-
-        {/* 4. Entities */}
-        <Route path="/entities" element={<EntitiesPage />} />
-        <Route path="/entities/:id" element={<EntityDetailPage />} />
-
-        {/* 5. Entity Match Review */}
-        <Route path="/entity-matches" element={<MatchReviewPage />} />
-        <Route path="/match-review" element={<Navigate to="/entity-matches" replace />} />
-
-        {/* 6. Link Analysis (Signature feature) */}
-        <Route path="/link-analysis" element={<LinkAnalysisPage />} />
-        <Route path="/graph" element={<Navigate to="/link-analysis" replace />} />
-
-        {/* 7. Shortest Path */}
-        <Route path="/shortest-path" element={<ShortestPathPage />} />
-
-        {/* 8. Alerts */}
-        <Route path="/alerts" element={<AlertsPage />} />
-
-        {/* 9. Call Records */}
+        <Route path="/sources" element={<SourcesPage />} />
         <Route path="/call-records" element={<CallRecordsPage />} />
-
-        {/* 10. Transactions */}
         <Route path="/transactions" element={<TransactionsPage />} />
 
-        {/* 11. Activity Logs */}
-        <Route path="/activity-logs" element={<ActivityLogsPage />} />
-        <Route path="/audit" element={<Navigate to="/activity-logs" replace />} />
+        {/* 03 Document Intelligence */}
+        <Route path="/documents" element={<DocumentsPage />} />
+        <Route path="/documents/:id" element={<DocumentDetailPage />} />
+        <Route path="/evidence" element={<Navigate to="/documents" replace />} />
 
-        {/* 12. Settings */}
-        <Route path="/settings" element={<SettingsPage />} />
+        {/* 04 Entity Matching */}
+        <Route path="/entities" element={<EntitiesPage />} />
+        <Route path="/entities/:id" element={<EntityDetailPage />} />
+        <Route path="/match-review" element={<MatchReviewPage />} />
+        <Route path="/entity-matches" element={<Navigate to="/match-review" replace />} />
 
-        {/* Catch-all */}
-        <Route path="*" element={<Navigate to="/overview" replace />} />
+        {/* 05 Network Explorer */}
+        <Route path="/graph" element={<LinkAnalysisPage />} />
+        <Route path="/cases/:id/graph" element={<LinkAnalysisPage />} />
+        <Route path="/link-analysis" element={<Navigate to="/graph" replace />} />
+        <Route path="/relationships" element={<RelationshipsPage />} />
+
+        {/* 06 Alerts & Analytics */}
+        <Route path="/alerts" element={<AlertsPage />} />
+
+        {/* 07 Audit & Administration */}
+        <Route path="/audit-logs" element={<AuditLogsPage />} />
+        <Route path="/activity-logs" element={<Navigate to="/audit-logs" replace />} />
+        <Route path="/audit" element={<Navigate to="/audit-logs" replace />} />
+
+        {/* Catch-all redirect to Dashboard */}
+        <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
     </Routes>
-  )
+  );
 }
